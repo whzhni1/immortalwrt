@@ -56,7 +56,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || env.DEFAULT_VERSION }}
+  REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || 'immortalwrt-24.10' }}
   FEEDS_CONF: feeds.conf.default
   DIY_P1_SH: part1.sh
   DIY_P2_SH: part2.sh
