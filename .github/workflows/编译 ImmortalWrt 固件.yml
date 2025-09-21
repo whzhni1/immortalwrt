@@ -17,7 +17,7 @@ on:
       REPO_VERSION:
         description: '选择 ImmortalWrt 版本 (格式: v24.10.2 或分支名)'
         required: false
-        default: 'immortalwrt-24.10'
+        default: 'v24.10'
         type: string
       DEVICE_MODEL:
         description: '选择路由器型号'
