@@ -4,7 +4,7 @@
 # This is free software, licensed under the MIT License.
 # See /LICENSE for more information.
 #
-# https://github.com/P3TERX/Actions-OpenWrt
+# https://github.com/P3TERX/Actions-ImmortalWrt
 # Description: Build ImmortalWrt for Multiple Devices
 #
 
@@ -14,6 +14,11 @@ on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
+      REPO_VERSION:
+        description: '选择 ImmortalWrt 版本 (格式: 24.10.2 或分支名)'
+        required: false
+        default: 'immortalwrt-24.10'
+        type: string
       DEVICE_MODEL:
         description: '选择路由器型号'
         required: true
@@ -51,7 +56,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || 'immortalwrt-24.10' }}
   FEEDS_CONF: feeds.conf.default
   DIY_P1_SH: part1.sh
   DIY_P2_SH: part2.sh
@@ -67,6 +72,44 @@ jobs:
     steps:
     - name: 检查项目分支
       uses: actions/checkout@main
+
+    - name: 设置版本变量
+      run: |
+        # 处理版本输入
+        if [ -n "${{ github.event.inputs.REPO_VERSION }}" ]; then
+          REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+          echo "用户指定的版本: $REPO_VERSION"
+          
+          # 处理版本格式转换
+          if [[ "$REPO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # 如果是 24.10.2 格式，转换为 ImmortalWrt 分支名
+            BASE_VERSION="${REPO_VERSION%.*}"  # 移除最后的 .2，得到 24.10
+            BRANCH_NAME="immortalwrt-$BASE_VERSION"
+            echo "转换为 ImmortalWrt 分支名: $BRANCH_NAME"
+            echo "REPO_BRANCH=$BRANCH_NAME" >> $GITHUB_ENV
+          else
+            # 直接使用输入的分支名
+            echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
+          fi
+        else
+          echo "使用默认版本: immortalwrt-24.10"
+          echo "REPO_BRANCH=immortalwrt-24.10" >> $GITHUB_ENV
+        fi
+        
+        # 测试拼接的源码地址
+        echo "======================================"
+        echo "源码仓库: $REPO_URL"
+        echo "目标分支: $REPO_BRANCH"
+        echo "完整地址: $REPO_URL/tree/$REPO_BRANCH"
+        echo "======================================"
+        
+        # 验证分支是否存在（可选）
+        echo "正在验证分支是否存在..."
+        if curl -s -I "$REPO_URL/tree/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
+          echo "✅ 分支验证成功: $REPO_BRANCH 存在"
+        else
+          echo "⚠️  分支验证: 无法直接验证 $REPO_BRANCH，将继续尝试克隆"
+        fi
 
     - name: 设置设备变量
       run: |
@@ -135,13 +178,64 @@ jobs:
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-        cd openwrt
+        echo "正在克隆 ImmortalWrt 源码..."
+        echo "仓库: $REPO_URL"
+        echo "分支/版本: $REPO_BRANCH"
+        
+        # 显示完整的克隆命令用于调试
+        echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_BRANCH ImmortalWrt"
+        
+        # 尝试克隆指定的分支/版本
+        if git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt; then
+          echo "✅ 源码克隆成功!"
+          CLONE_STATUS="success"
+        else
+          echo "❌ 指定的分支 '$REPO_BRANCH' 克隆失败，尝试使用默认分支..."
+          if git clone --depth 1 "$REPO_URL" ImmortalWrt; then
+            cd ImmortalWrt
+            # 检查是否存在该分支
+            if git show-ref --verify --quiet "refs/remotes/origin/$REPO_BRANCH"; then
+              echo "切换到分支 $REPO_BRANCH"
+              git checkout "$REPO_BRANCH"
+              CLONE_STATUS="success"
+            else
+              echo "❌ 分支 $REPO_BRANCH 不存在，使用默认分支"
+              DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+              echo "使用默认分支: $DEFAULT_BRANCH"
+              git checkout "$DEFAULT_BRANCH"
+              CLONE_STATUS="fallback"
+            fi
+            cd ..
+          else
+            echo "❌ 源码克隆完全失败!"
+            CLONE_STATUS="failed"
+            exit 1
+          fi
+        fi
+        
+        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+        cd ImmortalWrt
+        
+        # 显示详细的版本信息
         echo "======================================"
-        echo "ImmortalWrt 源码下载完成"
-        echo "分支: $(git branch --show-current)"
-        echo "提交: $(git log --oneline -1)"
+        echo "ImmortalWrt 源码信息:"
+        echo "当前分支: $(git branch --show-current)"
+        echo "最新提交: $(git log --oneline -1)"
+        
+        # 尝试获取版本信息
+        if [ -f "include/version.mk" ]; then
+          VERSION_NUMBER=$(grep 'VERSION_NUMBER' include/version.mk | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          echo "版本号: $VERSION_NUMBER"
+        fi
+        
+        if [ -f "Makefile" ]; then
+          VERSION=$(grep '^VERSION' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          PATCHLEVEL=$(grep '^PATCHLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          SUBLEVEL=$(grep '^SUBLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          echo "ImmortalWrt 版本: $VERSION.$PATCHLEVEL.$SUBLEVEL"
+        fi
+        
+        echo "克隆状态: $CLONE_STATUS"
         echo "======================================"
 
     - name: 创建默认脚本
@@ -184,9 +278,9 @@ jobs:
 
     - name: 加载自定义feeds和执行脚本Part1
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF Immortalwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
-        cd openwrt
+        cd ImmortalWrt
         echo "======================================"
         echo "执行自定义脚本 Part1..."
         echo "======================================"
@@ -194,7 +288,7 @@ jobs:
 
     - name: 更新并安装feeds
       run: |
-        cd openwrt
+        cd ImmortalWrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         echo "======================================"
@@ -225,11 +319,11 @@ jobs:
         
         # 复制配置文件
         echo "使用配置文件: ${{ env.CONFIG_FILE }}"
-        cp ${{ env.CONFIG_FILE }} openwrt/.config
+        cp ${{ env.CONFIG_FILE }} ImmortalWrt/.config
         
         # 执行 Part2 脚本
         chmod +x $DIY_P2_SH
-        cd openwrt
+        cd ImmortalWrt
         echo "======================================"
         echo "执行自定义脚本 Part2..."
         echo "======================================"
@@ -237,7 +331,7 @@ jobs:
 
     - name: 设置LAN IP地址
       run: |
-        cd openwrt
+        cd ImmortalWrt
         SET_IP="${{ github.event.inputs.LAN_IP }}"
         if [ -z "$SET_IP" ]; then
           SET_IP="192.168.1.1"
@@ -272,7 +366,7 @@ jobs:
     - name: 下载软件包
       id: package
       run: |
-        cd openwrt
+        cd ImmortalWrt
         make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
@@ -284,7 +378,7 @@ jobs:
     - name: 编译固件
       id: compile
       run: |
-        cd openwrt
+        cd ImmortalWrt
         echo -e "$(nproc) 线程编译"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
@@ -300,14 +394,14 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && github.event.inputs.UPLOAD_BIN_DIR == 'true'
       with:
-        name: OpenWrt_bin_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: openwrt/bin
+        name: ImmortalWrt_bin_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        path: ImmortalWrt/bin
 
     - name: 整理固件文件
       id: organize
       if: github.event.inputs.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        cd ImmortalWrt/bin/targets/*/*
         rm -rf packages
         # 删除不需要的文件
         find . -type f -name "*.buildinfo" -o -name "*.manifest" -o -name "*kernel.bin" -o -name "*rootfs.tar.gz" -o -name "*.dtb" | xargs rm -f
@@ -374,7 +468,7 @@ jobs:
         3. 选择固件升级，上传文件
         4. 等待刷机完成，自动重启
         
-        ### OpenWrt/ImmortalWrt 升级
+        ### ImmortalWrt 升级
         1. 下载对应的 \`sysupgrade.bin\` 文件
         2. 进入 系统 → 备份/升级
         3. 上传固件文件
