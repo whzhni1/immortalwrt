@@ -1,28 +1,61 @@
-name: Fetch ImmortalWrt Config for CMCC RAX3000M
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# Description: Fetch ImmortalWrt Config without Building
+#
+
+name: Fetch CMCC RAX3000M Config
 
 on:
+  repository_dispatch:
   workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+      upload_release:
+        description: 'Upload config to Release'
+        required: false
+        default: 'true'
+        type: boolean
   push:
     branches:
       - main
+    paths:
+      - 'part1.sh'
+      - 'part2.sh'
+      - '.config'
   schedule:
-    - cron: '0 2 * * 5'  # 每周五凌晨2点执行
+    - cron: 0 2 * * 5
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
+  DIY_P1_SH: part1.sh
+  DIY_P2_SH: part2.sh
+  UPLOAD_CONFIG: true
+  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  DEVICE_TARGET: mediatek
-  DEVICE_SUBTARGET: filogic
-  DEVICE_PROFILE: cmcc_rax3000m
+  DEVICE_NAME: cmcc_rax3000m
+  TARGET_NAME: mediatek-filogic
 
 jobs:
-  fetch-config:
+  config:
     runs-on: ubuntu-22.04
+    
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@main
 
     - name: Initialize Environment
       env:
@@ -31,368 +64,305 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y \
-          build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev \
-          libz-dev patch python3 python2.7 unzip zlib1g-dev lib32gcc-s1 libc6-dev-i386 \
-          subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp \
-          libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev \
-          autoconf automake libtool autopoint device-tree-compiler g++-multilib \
-          antlr3 gperf wget curl swig rsync
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
+          mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
+          libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
+          vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
+        
+        echo "============================="
+        echo "Environment initialized"
+        df -hT
+        echo "============================="
 
-    - name: Clone ImmortalWrt Source Code
+    - name: Clone Source Code
       working-directory: /workdir
       run: |
-        df -hT $PWD
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH immortalwrt
-        ln -sf /workdir/immortalwrt $GITHUB_WORKSPACE/immortalwrt
-        cd immortalwrt
-        echo "======================================"
-        echo "ImmortalWrt source code cloned successfully"
-        echo "Current branch: $(git branch --show-current)"
-        echo "Latest commit: $(git log --oneline -1)"
-        echo "======================================"
+        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        cd openwrt
+        echo "============================="
+        echo "Source code information:"
+        echo "Branch: $(git branch --show-current)"
+        echo "Commit: $(git log --oneline -1)"
+        echo "============================="
 
-    - name: Load Custom Files
+    - name: Load Custom Feeds & DIY Part1
       run: |
-        [ -e files ] && mv files immortalwrt/files
-        chmod +x $GITHUB_WORKSPACE/*.sh 2>/dev/null || true
-
-    - name: Run DIY Part1 Script (Add Custom Feeds & Packages)
-      working-directory: ./immortalwrt
-      run: |
-        echo "======================================"
-        echo "Running DIY Part1 Script..."
-        echo "======================================"
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         
-        # 检查 part1.sh 是否存在
-        if [ -f "$GITHUB_WORKSPACE/part1.sh" ]; then
-          echo "Found part1.sh, executing..."
-          
-          # 显示原始 feeds.conf.default 内容
-          echo "Original feeds.conf.default:"
-          cat feeds.conf.default
-          echo "======================================"
-          
-          # 复制脚本到工作目录并执行
-          cp $GITHUB_WORKSPACE/part1.sh ./part1.sh
-          chmod +x ./part1.sh
-          
-          # 执行脚本
-          bash ./part1.sh
-          
-          # 显示修改后的 feeds.conf.default
-          echo "======================================"
-          echo "Modified feeds.conf.default:"
-          cat feeds.conf.default
-          echo "======================================"
-          
-          # 列出 package 目录中的新添加内容
-          echo "Custom packages added:"
-          ls -la package/ | grep -E "(lucky|OpenAppFilter|aliyundrive)" || echo "No custom packages found yet"
-          echo "======================================"
-        else
-          echo "No part1.sh found, creating default one..."
-          
-          # 创建默认的 part1.sh 作为示例
-          cat > $GITHUB_WORKSPACE/part1.sh <<'EOF'
+        # 如果 part1.sh 不存在，创建默认的
+        if [ ! -f $DIY_P1_SH ]; then
+          echo "Creating default part1.sh..."
+          cat > $DIY_P1_SH <<'EOF'
         #!/bin/bash
-        # DIY Part1 Script - Add custom feeds and packages before feeds update
-        
         # Add custom feed sources
+        # sed -i 's/^#KATEX_INLINE_OPEN.*helloworldKATEX_INLINE_CLOSE/\1/' feeds.conf.default
         # echo 'src-git helloworld https://github.com/fw876/helloworld' >> feeds.conf.default
         # echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >> feeds.conf.default
-        # echo 'src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages' >> feeds.conf.default
         
-        # Clone custom packages
-        # git clone https://github.com/messense/aliyundrive-webdav package/aliyundrive-webdav
+        # Add custom packages
         git clone --depth=1 https://github.com/gdy666/luci-app-lucky package/lucky
         git clone --depth=1 https://github.com/destan19/OpenAppFilter package/OpenAppFilter
         
-        # Uncomment a feed source
-        # sed -i 's/^#KATEX_INLINE_OPEN.*helloworldKATEX_INLINE_CLOSE/\1/' feeds.conf.default
-        
-        echo "DIY Part1 script executed successfully!"
+        echo "DIY Part1 completed!"
         EOF
-          
-          chmod +x $GITHUB_WORKSPACE/part1.sh
-          bash $GITHUB_WORKSPACE/part1.sh
         fi
+        
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        echo "============================="
+        echo "Running DIY Part1 script..."
+        echo "============================="
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+        
+        echo "============================="
+        echo "Current feeds.conf.default:"
+        cat feeds.conf.default
+        echo "============================="
 
     - name: Update & Install Feeds
-      working-directory: ./immortalwrt
       run: |
-        echo "======================================"
-        echo "Updating and installing feeds..."
-        echo "======================================"
-        
-        # 更新所有 feeds
+        cd openwrt
         ./scripts/feeds update -a
-        
-        # 显示可用的 feeds
-        echo "Available feeds:"
-        ./scripts/feeds list -n
-        echo "======================================"
-        
-        # 安装所有 feeds
         ./scripts/feeds install -a
         
-        # 如果有自定义包，尝试安装
-        if [ -d "package/lucky" ]; then
-          echo "Installing lucky package..."
-          ./scripts/feeds install -a -p lucky || true
-        fi
-        
-        if [ -d "package/OpenAppFilter" ]; then
-          echo "Installing OpenAppFilter..."
-          ./scripts/feeds install -a -p OpenAppFilter || true
-        fi
+        echo "============================="
+        echo "Feeds updated and installed"
+        echo "============================="
 
-    - name: Run DIY Part2 Script (Optional - After Feeds)
-      working-directory: ./immortalwrt
+    - name: Load Custom Config & DIY Part2
       run: |
-        # 检查是否有 part2.sh 脚本
-        if [ -f "$GITHUB_WORKSPACE/part2.sh" ]; then
-          echo "======================================"
-          echo "Running DIY Part2 Script..."
-          echo "======================================"
-          cp $GITHUB_WORKSPACE/part2.sh ./part2.sh
-          chmod +x ./part2.sh
-          bash ./part2.sh
+        # 如果有自定义配置文件，使用它
+        if [ -e $CONFIG_FILE ]; then
+          echo "Using custom config file..."
+          mv $CONFIG_FILE openwrt/.config
         else
-          echo "No part2.sh found, skipping..."
-        fi
-
-    - name: Configure for CMCC RAX3000M
-      working-directory: ./immortalwrt
-      run: |
-        # 检查是否存在 .config 文件
-        if [ -f "$GITHUB_WORKSPACE/.config" ]; then
-          echo "Found existing .config file, copying..."
-          cp $GITHUB_WORKSPACE/.config .config
-        else
-          echo "No .config file found, generating for CMCC RAX3000M..."
-          
-          # 生成基础配置选择 CMCC RAX3000M
+          echo "No custom config found, generating for CMCC RAX3000M..."
+          cd openwrt
           cat > .config <<EOF
         CONFIG_TARGET_mediatek=y
         CONFIG_TARGET_mediatek_filogic=y
         CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_rax3000m=y
-        
-        # 添加基础 LuCI 支持
-        CONFIG_PACKAGE_luci=y
-        CONFIG_PACKAGE_luci-base=y
-        CONFIG_PACKAGE_luci-compat=y
-        CONFIG_PACKAGE_luci-lib-ipkg=y
-        
-        # 如果添加了自定义包，默认选中
-        CONFIG_PACKAGE_luci-app-lucky=y
-        CONFIG_PACKAGE_luci-app-oaf=y
         EOF
-          
-          # 让系统扩展配置
-          make defconfig
-          
-          echo "======================================"
-          echo "Configuration generated for CMCC RAX3000M"
-          echo "======================================"
-        fi
-
-    - name: Display Custom Packages Status
-      working-directory: ./immortalwrt
-      run: |
-        echo "======================================"
-        echo "Custom Packages Status:"
-        echo "======================================"
-        
-        # 检查自定义包是否在配置中
-        echo "Checking configuration for custom packages..."
-        
-        if grep -q "CONFIG_PACKAGE_.*lucky" .config; then
-          echo "✓ Lucky package found in config"
-          grep "CONFIG_PACKAGE_.*lucky" .config
-        else
-          echo "✗ Lucky package not found in config"
         fi
         
-        if grep -q "CONFIG_PACKAGE_.*oaf\|OpenAppFilter" .config; then
-          echo "✓ OpenAppFilter found in config"
-          grep "CONFIG_PACKAGE_.*oaf\|OpenAppFilter" .config || true
-        else
-          echo "✗ OpenAppFilter not found in config"
+        # 如果 part2.sh 不存在，创建默认的
+        if [ ! -f $DIY_P2_SH ]; then
+          echo "Creating default part2.sh..."
+          cat > $DIY_P2_SH <<'EOF'
+        #!/bin/bash
+        # Modify default settings
+        # sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
+        
+        # Add custom packages to config
+        # echo "CONFIG_PACKAGE_luci-app-lucky=y" >> .config
+        # echo "CONFIG_PACKAGE_luci-app-oaf=y" >> .config
+        
+        echo "DIY Part2 completed!"
+        EOF
         fi
         
-        echo "======================================"
-        echo "Package directory contents:"
-        ls -la package/ | tail -20
-        echo "======================================"
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        echo "============================="
+        echo "Running DIY Part2 script..."
+        echo "============================="
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Display Target Info
-      working-directory: ./immortalwrt
-      run: |
-        echo "======================================"
-        echo "Target Device Information:"
-        echo "======================================"
-        grep '^CONFIG_TARGET_' .config | grep '=y'
-        echo "======================================"
-        echo "Device Profile:"
-        grep 'CONFIG_TARGET_PROFILE' .config || true
-        grep 'DEVICE_cmcc_rax3000m' .config || true
-        echo "======================================"
+    - name: SSH Connection to Actions
+      uses: P3TERX/ssh2actions@v1.0.0
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false') || contains(github.event.action, 'ssh')
+      env:
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
-    - name: Download Package Sources
-      working-directory: ./immortalwrt
+    - name: Generate Configuration
+      id: generate
       run: |
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        cd openwrt
+        echo "============================="
+        echo "Generating full configuration..."
+        echo "============================="
+        
+        make defconfig
+        
+        # 获取设备信息
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*TARGET_.*_(.*)_DEVICE_.*=y/\1/' > TARGET_NAME
+        [ -s TARGET_NAME ] && echo "TARGET_NAME=$(cat TARGET_NAME)" >> $GITHUB_ENV
+        
+        echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+        
+        echo "============================="
+        echo "Device: ${{ env.DEVICE_NAME }}"
+        echo "Target: ${{ env.TARGET_NAME }}"
+        echo "============================="
 
-    - name: Display Config Summary
-      working-directory: ./immortalwrt
+    - name: Check Configuration
       run: |
-        echo "======================================"
+        cd openwrt
+        echo "============================="
         echo "Configuration Summary:"
-        echo "======================================"
-        echo "Target Platform: MediaTek Filogic"
-        echo "Device: CMCC RAX3000M"
-        echo "======================================"
-        echo "Core Packages:"
-        grep '^CONFIG_PACKAGE_.*luci.*=y' .config | head -20 || true
-        echo "======================================"
+        echo "============================="
+        echo "Target Information:"
+        grep '^CONFIG_TARGET_' .config | grep '=y' | head -10
+        echo "============================="
+        echo "Selected Packages (LuCI):"
+        grep '^CONFIG_PACKAGE_luci' .config | grep '=y' | head -20
+        echo "============================="
         echo "Custom Packages:"
-        grep '^CONFIG_PACKAGE_.*lucky\|oaf\|aliyun.*=y' .config || echo "No custom packages enabled"
-        echo "======================================"
+        grep -E '^CONFIG_PACKAGE_.*(lucky|oaf|dockerman)' .config | grep '=y' || echo "No custom packages selected"
+        echo "============================="
 
     - name: Generate Seed Config
-      working-directory: ./immortalwrt
       run: |
-        # 生成 seed 配置（最小化配置）
+        cd openwrt
         ./scripts/diffconfig.sh > seed.config
-        echo "======================================"
-        echo "Seed Config (Minimal Config):"
-        echo "======================================"
+        echo "============================="
+        echo "Seed Configuration (diffconfig):"
+        echo "============================="
         cat seed.config
-        echo "======================================"
-
-    - name: Upload Full Config
-      uses: actions/upload-artifact@v4
-      with:
-        name: rax3000m-full-config-${{ github.run_number }}
-        path: |
-          immortalwrt/.config
-
-    - name: Upload Seed Config
-      uses: actions/upload-artifact@v4
-      with:
-        name: rax3000m-seed-config-${{ github.run_number }}
-        path: |
-          immortalwrt/seed.config
-
-    - name: Upload DIY Scripts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: diy-scripts-${{ github.run_number }}
-        path: |
-          part1.sh
-          part2.sh
-          immortalwrt/feeds.conf.default
+        echo "============================="
+        
+        # 统计配置
+        echo "Configuration Statistics:"
+        echo "Total packages selected: $(grep -c '^CONFIG_PACKAGE_.*=y' .config)"
+        echo "Total modules selected: $(grep -c '^CONFIG_.*MODULE.*=y' .config)"
+        echo "============================="
 
     - name: Organize Config Files
-      working-directory: ./immortalwrt
+      id: organize
+      if: env.UPLOAD_CONFIG == 'true' && !cancelled()
       run: |
+        cd openwrt
         mkdir -p $GITHUB_WORKSPACE/configs
-        cp .config $GITHUB_WORKSPACE/configs/rax3000m-full.config
-        cp seed.config $GITHUB_WORKSPACE/configs/rax3000m-seed.config
+        
+        # 复制配置文件
+        cp .config $GITHUB_WORKSPACE/configs/${{ env.FILE_DATE }}-${{ env.DEVICE_NAME }}-full.config
+        cp seed.config $GITHUB_WORKSPACE/configs/${{ env.FILE_DATE }}-${{ env.DEVICE_NAME }}-seed.config
         cp feeds.conf.default $GITHUB_WORKSPACE/configs/feeds.conf.default
         
         # 复制 DIY 脚本
-        [ -f "$GITHUB_WORKSPACE/part1.sh" ] && cp $GITHUB_WORKSPACE/part1.sh $GITHUB_WORKSPACE/configs/
-        [ -f "$GITHUB_WORKSPACE/part2.sh" ] && cp $GITHUB_WORKSPACE/part2.sh $GITHUB_WORKSPACE/configs/
+        [ -f $GITHUB_WORKSPACE/$DIY_P1_SH ] && cp $GITHUB_WORKSPACE/$DIY_P1_SH $GITHUB_WORKSPACE/configs/
+        [ -f $GITHUB_WORKSPACE/$DIY_P2_SH ] && cp $GITHUB_WORKSPACE/$DIY_P2_SH $GITHUB_WORKSPACE/configs/
         
-        # 创建配置信息文件
-        cat > $GITHUB_WORKSPACE/configs/README.md <<EOF
-        # CMCC RAX3000M Configuration Files
+        # 生成信息文件
+        cat > $GITHUB_WORKSPACE/configs/INFO.txt <<EOF
+        ========================================
+        ImmortalWrt Configuration Information
+        ========================================
+        Build Date: ${{ env.FILE_DATE }}
+        Device: ${{ env.DEVICE_NAME }}
+        Target: ${{ env.TARGET_NAME }}
+        Source: ${{ env.REPO_URL }}
+        Branch: ${{ env.REPO_BRANCH }}
+        ========================================
         
-        ## Device Information
-        - **Device**: CMCC RAX3000M
-        - **Target**: MediaTek Filogic
-        - **Branch**: ${{ env.REPO_BRANCH }}
-        - **Generated**: $(date +"%Y-%m-%d %H:%M:%S")
+        Files Description:
+        - *-full.config: Complete configuration file with all options
+        - *-seed.config: Minimal seed configuration (diffconfig)
+        - feeds.conf.default: Feed sources configuration
+        - part1.sh: DIY script before feeds update
+        - part2.sh: DIY script after feeds update
         
-        ## Files
-        - **rax3000m-full.config**: Complete configuration file
-        - **rax3000m-seed.config**: Minimal seed configuration (diffconfig)
-        - **feeds.conf.default**: Feed sources configuration
-        - **part1.sh**: DIY script for adding custom feeds and packages
-        - **part2.sh**: DIY script for post-feed configurations (if exists)
+        Usage:
+        1. Copy the config file to your openwrt source directory
+        2. Run 'make defconfig' to expand the configuration
+        3. Run 'make menuconfig' for further customization
+        4. Run 'make download' to download packages
+        5. Run 'make -j$(nproc)' to build firmware
+        ========================================
+        EOF
         
-        ## Custom Packages Added
-        $(ls -1 package/ | grep -E "(lucky|OpenAppFilter|aliyundrive)" || echo "- No custom packages")
+        echo "FIRMWARE=$GITHUB_WORKSPACE/configs" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
         
-        ## Usage
+        echo "============================="
+        echo "Config files organized:"
+        ls -la $GITHUB_WORKSPACE/configs/
+        echo "============================="
+
+    - name: Upload Config to Artifacts
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: ${{ env.FILE_DATE }}-${{ env.DEVICE_NAME }}-configs
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate Release Tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+        touch release.txt
+        cat >> release.txt <<EOF
+        ## 配置信息 | Configuration Info
         
-        ### Using Full Config:
+        - **设备型号 | Device**: CMCC RAX3000M
+        - **目标平台 | Target**: ${{ env.TARGET_NAME }}
+        - **源码仓库 | Source**: ${{ env.REPO_URL }}
+        - **源码分支 | Branch**: ${{ env.REPO_BRANCH }}
+        - **生成时间 | Date**: ${{ env.FILE_DATE }}
+        
+        ## 文件说明 | Files Description
+        
+        | 文件名 | 说明 |
+        |--------|------|
+        | \`*-full.config\` | 完整配置文件 |
+        | \`*-seed.config\` | 精简配置文件(diffconfig) |
+        | \`feeds.conf.default\` | 软件源配置 |
+        | \`part1.sh\` | 自定义脚本1 (feeds前) |
+        | \`part2.sh\` | 自定义脚本2 (feeds后) |
+        | \`INFO.txt\` | 配置信息说明 |
+        
+        ## 使用方法 | Usage
+        
         \`\`\`bash
-        cp rax3000m-full.config .config
+        # 使用完整配置
+        cp *-full.config .config
         make defconfig
-        \`\`\`
         
-        ### Using Seed Config:
-        \`\`\`bash
-        cp rax3000m-seed.config .config
+        # 或使用精简配置
+        cp *-seed.config .config
         make defconfig
-        \`\`\`
-        
-        ### Using DIY Scripts:
-        \`\`\`bash
-        # Before feeds update
-        bash part1.sh
-        
-        # Update feeds
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        
-        # After feeds (optional)
-        bash part2.sh
         \`\`\`
         EOF
         
-        echo "======================================"
-        echo "Config files organized:"
-        ls -la $GITHUB_WORKSPACE/configs/
-        echo "======================================"
+        echo "release_tag=${{ env.FILE_DATE }}-${{ env.DEVICE_NAME }}-config" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload All Configs Bundle
-      uses: actions/upload-artifact@v4
+    - name: Upload Config to Release
+      uses: softprops/action-gh-release@v2.1.0
+      if: steps.tag.outputs.status == 'success' && (github.event.inputs.upload_release == 'true' || github.event_name == 'push')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        name: rax3000m-configs-bundle-${{ github.run_number }}
-        path: configs/
-        retention-days: 30
+        files: ${{ env.FIRMWARE }}/*
+        name: ${{ env.FILE_DATE }}-${{ env.DEVICE_NAME }}-Config
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
 
-    - name: Check Config Validity
-      working-directory: ./immortalwrt
-      run: |
-        echo "======================================"
-        echo "Checking configuration validity..."
-        echo "======================================"
-        
-        # 检查关键配置是否存在
-        if grep -q "CONFIG_TARGET_mediatek=y" .config && \
-           grep -q "CONFIG_TARGET_mediatek_filogic=y" .config && \
-           grep -q "CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_rax3000m=y" .config; then
-          echo "✓ Configuration is valid for CMCC RAX3000M"
-        else
-          echo "✗ Configuration validation failed!"
-          echo "Missing required target configuration"
-          exit 1
-        fi
-
-    - name: Delete Old Workflow Runs
+    - name: Delete Workflow Runs
       uses: Mattraks/delete-workflow-runs@v2
       with:
-        retain_days: 7
+        retain_days: 3
         keep_minimum_runs: 5
+
+    - name: Remove Old Releases
+      uses: dev-drprasad/delete-older-releases@v0.3.2
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 10
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
