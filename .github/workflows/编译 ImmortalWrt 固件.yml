@@ -56,7 +56,6 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  DEFAULT_VERSION: immortalwrt-24.10
   REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || env.DEFAULT_VERSION }}
   FEEDS_CONF: feeds.conf.default
   DIY_P1_SH: part1.sh
@@ -76,10 +75,6 @@ jobs:
 
     - name: 设置版本变量
       run: |
-        # 设置默认版本
-        DEFAULT_VERSION="${{ env.DEFAULT_VERSION }}"
-        echo "默认版本: $DEFAULT_VERSION"
-        
         # 处理版本输入
         if [ -n "${{ github.event.inputs.REPO_VERSION }}" ]; then
           REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
@@ -87,22 +82,19 @@ jobs:
           # 直接使用输入的分支名
           echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
         else
-          echo "使用默认版本: $DEFAULT_VERSION"
-          echo "REPO_BRANCH=$DEFAULT_VERSION" >> $GITHUB_ENV
+          echo "使用默认版本: immortalwrt-24.10"
+          echo "REPO_BRANCH=immortalwrt-24.10" >> $GITHUB_ENV
         fi
-        
-        # 同时设置到环境变量供后续步骤使用
-        echo "DEFAULT_VERSION=$DEFAULT_VERSION" >> $GITHUB_ENV
         
         # 测试拼接的源码地址
         echo "======================================"
         echo "源码仓库: $REPO_URL"
-        echo "目标版本: $REPO_BRANCH"
+        echo "目标分支: $REPO_BRANCH"
         echo "完整地址: $REPO_URL/tree/$REPO_BRANCH"
         echo "======================================"
         
         # 验证分支是否存在（可选）
-        echo "正在验证版本是否存在..."
+        echo "正在验证分支是否存在..."
         if curl -s -I "$REPO_URL/tree/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
           echo "✅ 版本验证成功: $REPO_BRANCH 存在"
         elif curl -s -I "$REPO_URL/releases/tag/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
@@ -180,8 +172,7 @@ jobs:
         df -hT $PWD
         echo "正在克隆 ImmortalWrt 源码..."
         echo "仓库: $REPO_URL"
-        echo "版本: $REPO_BRANCH"
-        echo "默认版本: $DEFAULT_VERSION"
+        echo "分支/版本: $REPO_BRANCH"
         
         # 显示完整的克隆命令用于调试
         echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_BRANCH ImmortalWrt"
@@ -200,18 +191,11 @@ jobs:
               git checkout "$REPO_BRANCH"
               CLONE_STATUS="success"
             else
-              echo "❌ 版本 $REPO_BRANCH 不存在，使用默认分支: $DEFAULT_VERSION"
-              # 检查默认分支是否存在
-              if git show-ref --verify --quiet "refs/remotes/origin/$DEFAULT_VERSION"; then
-                echo "切换到默认分支: $DEFAULT_VERSION"
-                git checkout "$DEFAULT_VERSION"
-                CLONE_STATUS="fallback_default"
-              else
-                DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
-                echo "默认分支 $DEFAULT_VERSION 不存在，使用仓库默认分支: $DEFAULT_BRANCH"
-                git checkout "$DEFAULT_BRANCH"
-                CLONE_STATUS="fallback_head"
-              fi
+              echo "❌ 版本 $REPO_BRANCH 不存在，使用默认分支"
+              DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+              echo "使用默认分支: $DEFAULT_BRANCH"
+              git checkout "$DEFAULT_BRANCH"
+              CLONE_STATUS="fallback"
             fi
             cd ..
           else
@@ -220,7 +204,6 @@ jobs:
             exit 1
           fi
         fi
-
         
         ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
         cd ImmortalWrt
