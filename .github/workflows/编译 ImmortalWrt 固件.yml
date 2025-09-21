@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       REPO_VERSION:
-        description: '选择 ImmortalWrt 版本 (格式: 24.10.2 或分支名)'
+        description: '选择 ImmortalWrt 版本 (格式: v24.10.2 或分支名)'
         required: false
         default: 'immortalwrt-24.10'
         type: string
@@ -56,7 +56,8 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || 'immortalwrt-24.10' }}
+  DEFAULT_VERSION: immortalwrt-24.10
+  REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || env.DEFAULT_VERSION }}
   FEEDS_CONF: feeds.conf.default
   DIY_P1_SH: part1.sh
   DIY_P2_SH: part2.sh
@@ -79,21 +80,11 @@ jobs:
         if [ -n "${{ github.event.inputs.REPO_VERSION }}" ]; then
           REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
           echo "用户指定的版本: $REPO_VERSION"
-          
-          # 处理版本格式转换
-          if [[ "$REPO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            # 如果是 24.10.2 格式，转换为 ImmortalWrt 分支名
-            BASE_VERSION="${REPO_VERSION%.*}"  # 移除最后的 .2，得到 24.10
-            BRANCH_NAME="immortalwrt-$BASE_VERSION"
-            echo "转换为 ImmortalWrt 分支名: $BRANCH_NAME"
-            echo "REPO_BRANCH=$BRANCH_NAME" >> $GITHUB_ENV
-          else
-            # 直接使用输入的分支名
-            echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
-          fi
+          # 直接使用输入的分支名
+          echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
         else
-          echo "使用默认版本: immortalwrt-24.10"
-          echo "REPO_BRANCH=immortalwrt-24.10" >> $GITHUB_ENV
+          echo "使用默认版本: $DEFAULT_VERSION"
+          echo "REPO_BRANCH=$DEFAULT_VERSION" >> $GITHUB_ENV
         fi
         
         # 测试拼接的源码地址
@@ -106,11 +97,13 @@ jobs:
         # 验证分支是否存在（可选）
         echo "正在验证分支是否存在..."
         if curl -s -I "$REPO_URL/tree/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
-          echo "✅ 分支验证成功: $REPO_BRANCH 存在"
+          echo "✅ 版本验证成功: $REPO_BRANCH 存在"
+        elif curl -s -I "$REPO_URL/releases/tag/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
+          echo "✅ 标签验证成功: $REPO_BRANCH 存在"
         else
-          echo "⚠️  分支验证: 无法直接验证 $REPO_BRANCH，将继续尝试克隆"
+          echo "⚠️  版本验证: 无法直接验证 $REPO_BRANCH，将继续尝试克隆"
         fi
-
+        
     - name: 设置设备变量
       run: |
         # 设置设备相关变量
@@ -193,13 +186,13 @@ jobs:
           echo "❌ 指定的分支 '$REPO_BRANCH' 克隆失败，尝试使用默认分支..."
           if git clone --depth 1 "$REPO_URL" ImmortalWrt; then
             cd ImmortalWrt
-            # 检查是否存在该分支
-            if git show-ref --verify --quiet "refs/remotes/origin/$REPO_BRANCH"; then
-              echo "切换到分支 $REPO_BRANCH"
+            # 检查是否存在该分支或标签
+            if git show-ref --verify --quiet "refs/remotes/origin/$REPO_BRANCH" || git show-ref --verify --quiet "refs/tags/$REPO_BRANCH"; then
+              echo "切换到版本 $REPO_BRANCH"
               git checkout "$REPO_BRANCH"
               CLONE_STATUS="success"
             else
-              echo "❌ 分支 $REPO_BRANCH 不存在，使用默认分支"
+              echo "❌ 版本 $REPO_BRANCH 不存在，使用默认分支"
               DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
               echo "使用默认分支: $DEFAULT_BRANCH"
               git checkout "$DEFAULT_BRANCH"
@@ -219,8 +212,15 @@ jobs:
         # 显示详细的版本信息
         echo "======================================"
         echo "ImmortalWrt 源码信息:"
-        echo "当前分支: $(git branch --show-current)"
+        echo "当前版本: $(git describe --tags 2>/dev/null || git branch --show-current)"
         echo "最新提交: $(git log --oneline -1)"
+
+        # 显示是分支还是标签
+        if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+          echo "类型: 标签 (Tag)"
+        else
+          echo "类型: 分支 (Branch)"
+        fi
         
         # 尝试获取版本信息
         if [ -f "include/version.mk" ]; then
