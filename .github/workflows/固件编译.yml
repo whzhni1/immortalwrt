@@ -1,0 +1,566 @@
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-ImmortalWrt
+# Description: Build ImmortalWrt for Multiple Devices
+#
+
+name: 编译 ImmortalWrt 固件
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      REPO_VERSION:
+        description: '选择 ImmortalWrt 版本 (格式: v24.10.2 或分支名)'
+        required: false
+        default: 'v24.10'
+        type: string
+      DEVICE_MODEL:
+        description: '选择路由器型号'
+        required: true
+        default: 'rax3000m'
+        type: choice
+        options:
+          - rax3000m
+          - ax6000
+      LAN_IP:
+        description: '设置LAN IP地址'
+        required: true
+        default: '192.168.1.1'
+      SSH_CONNECTION:
+        description: 'SSH连接到Actions'
+        required: false
+        default: false
+        type: boolean
+      UPLOAD_BIN_DIR:
+        description: '上传bin目录'
+        required: false
+        default: false
+        type: boolean
+      UPLOAD_FIRMWARE:
+        description: '上传固件到Artifacts'
+        required: false
+        default: true
+        type: boolean
+      UPLOAD_RELEASE:
+        description: '发布固件到Release'
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    - cron: 0 16 * * 5
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || 'immortalwrt-24.10' }}
+  FEEDS_CONF: feeds.conf.default
+  DIY_P1_SH: part1.sh
+  DIY_P2_SH: part2.sh
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    permissions:
+      contents: write
+    
+    steps:
+    - name: 检查项目分支
+      uses: actions/checkout@main
+
+    - name: 设置版本变量
+      run: |
+        # 处理版本输入
+        if [ -n "${{ github.event.inputs.REPO_VERSION }}" ]; then
+          REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+          echo "用户指定的版本: $REPO_VERSION"
+          # 直接使用输入的分支名
+          echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
+        else
+          echo "使用默认版本: immortalwrt-24.10"
+          echo "REPO_BRANCH=immortalwrt-24.10" >> $GITHUB_ENV
+        fi
+        
+        # 测试拼接的源码地址
+        echo "======================================"
+        echo "源码仓库: $REPO_URL"
+        echo "目标分支: $REPO_BRANCH"
+        echo "完整地址: $REPO_URL/tree/$REPO_BRANCH"
+        echo "======================================"
+        
+        # 验证分支是否存在（可选）
+        echo "正在验证分支是否存在..."
+        if curl -s -I "$REPO_URL/tree/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
+          echo "✅ 版本验证成功: $REPO_BRANCH 存在"
+        elif curl -s -I "$REPO_URL/releases/tag/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
+          echo "✅ 标签验证成功: $REPO_BRANCH 存在"
+        else
+          echo "⚠️  版本验证: 无法直接验证 $REPO_BRANCH，将继续尝试克隆"
+        fi
+        
+    - name: 设置设备变量
+      run: |
+        # 设置设备相关变量
+        DEVICE_MODEL="${{ github.event.inputs.DEVICE_MODEL }}"
+        if [ -z "$DEVICE_MODEL" ]; then
+          DEVICE_MODEL="rax3000m"
+        fi
+        
+        echo "DEVICE_MODEL=$DEVICE_MODEL" >> $GITHUB_ENV
+        echo "CONFIG_FILE=${DEVICE_MODEL}.config" >> $GITHUB_ENV
+        
+        # 根据设备型号设置变量
+        if [ "$DEVICE_MODEL" = "rax3000m" ]; then
+          echo "DEVICE_NAME=cmcc_rax3000m" >> $GITHUB_ENV
+          echo "DEVICE_FULL_NAME=CMCC-RAX3000M" >> $GITHUB_ENV
+          echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+        elif [ "$DEVICE_MODEL" = "ax6000" ]; then
+          echo "DEVICE_NAME=jdcloud_re-cp-03" >> $GITHUB_ENV
+          echo "DEVICE_FULL_NAME=JDCloud-AX6000" >> $GITHUB_ENV
+          echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+        fi
+        
+        echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+        
+        echo "======================================"
+        echo "设备型号: $DEVICE_MODEL"
+        echo "配置文件: ${DEVICE_MODEL}.config"
+        echo "======================================"
+
+    - name: 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install -y \
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
+          mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
+          libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
+          vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        echo "======================================"
+        echo "编译环境初始化完成"
+        echo "======================================"
+
+    - name: 清理磁盘空间
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: 下载源码
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        echo "正在克隆 ImmortalWrt 源码..."
+        echo "仓库: $REPO_URL"
+        echo "分支/版本: $REPO_BRANCH"
+        
+        # 显示完整的克隆命令用于调试
+        echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_BRANCH ImmortalWrt"
+        
+        # 尝试克隆指定的分支/版本
+        if git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt; then
+          echo "✅ 源码克隆成功!"
+          CLONE_STATUS="success"
+        else
+          echo "❌ 指定的版本 '$REPO_BRANCH' 克隆失败，尝试使用默认分支..."
+          if git clone --depth 1 "$REPO_URL" ImmortalWrt; then
+            cd ImmortalWrt
+            # 检查是否存在该分支或标签
+            if git show-ref --verify --quiet "refs/remotes/origin/$REPO_BRANCH" || git show-ref --verify --quiet "refs/tags/$REPO_BRANCH"; then
+              echo "切换到版本 $REPO_BRANCH"
+              git checkout "$REPO_BRANCH"
+              CLONE_STATUS="success"
+            else
+              echo "❌ 版本 $REPO_BRANCH 不存在，使用默认分支"
+              DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+              echo "使用默认分支: $DEFAULT_BRANCH"
+              git checkout "$DEFAULT_BRANCH"
+              CLONE_STATUS="fallback"
+            fi
+            cd ..
+          else
+            echo "❌ 源码克隆完全失败!"
+            CLONE_STATUS="failed"
+            exit 1
+          fi
+        fi
+        
+        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+        cd ImmortalWrt
+        
+        # 显示详细的版本信息
+        echo "======================================"
+        echo "ImmortalWrt 源码信息:"
+        echo "当前版本: $(git describe --tags 2>/dev/null || git branch --show-current)"
+        echo "最新提交: $(git log --oneline -1)"
+
+        # 显示是分支还是标签
+        if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+          echo "类型: 标签 (Tag)"
+        else
+          echo "类型: 分支 (Branch)"
+        fi
+        
+        # 尝试获取版本信息
+        if [ -f "include/version.mk" ]; then
+          VERSION_NUMBER=$(grep 'VERSION_NUMBER' include/version.mk | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          echo "版本号: $VERSION_NUMBER"
+        fi
+        
+        if [ -f "Makefile" ]; then
+          VERSION=$(grep '^VERSION' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          PATCHLEVEL=$(grep '^PATCHLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          SUBLEVEL=$(grep '^SUBLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          echo "ImmortalWrt 版本: $VERSION.$PATCHLEVEL.$SUBLEVEL"
+        fi
+        
+        echo "克隆状态: $CLONE_STATUS"
+        echo "======================================"
+
+    - name: 创建默认脚本
+      run: |
+        # 如果 part1.sh 不存在，创建默认的
+        if [ ! -f $DIY_P1_SH ]; then
+          echo "创建默认 part1.sh 脚本..."
+          cat > $DIY_P1_SH <<'EOF'
+        #!/bin/bash
+        # DIY Part1 - 在更新feeds前执行
+        
+        # Uncomment a feed source
+        #sed -i 's/^#KATEX_INLINE_OPEN.*helloworldKATEX_INLINE_CLOSE/\1/' feeds.conf.default
+        
+        # Add feed sources
+        #echo 'src-git helloworld https://github.com/fw876/helloworld' >> feeds.conf.default
+        #echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >> feeds.conf.default
+        
+        # Add packages
+        git clone --depth=1 https://github.com/gdy666/luci-app-lucky package/lucky
+        git clone --depth=1 https://github.com/destan19/OpenAppFilter package/OpenAppFilter
+        
+        echo "Part1 脚本执行完成!"
+        EOF
+        fi
+        
+        # 如果 part2.sh 不存在，创建默认的
+        if [ ! -f $DIY_P2_SH ]; then
+          echo "创建默认 part2.sh 脚本..."
+          cat > $DIY_P2_SH <<'EOF'
+        #!/bin/bash
+        # DIY Part2 - 在更新feeds后执行
+        
+        # Modify default settings
+        # sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
+        
+        echo "Part2 脚本执行完成!"
+        EOF
+        fi
+
+    - name: 加载自定义feeds和执行脚本Part1
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF Immortalwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd ImmortalWrt
+        echo "======================================"
+        echo "执行自定义脚本 Part1..."
+        echo "======================================"
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: 更新并安装feeds
+      run: |
+        cd ImmortalWrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        echo "======================================"
+        echo "Feeds 更新安装完成"
+        echo "======================================"
+
+        - name: 加载设备配置和执行脚本Part2
+      run: |
+        # 检查设备配置文件
+        if [ ! -f "${{ env.CONFIG_FILE }}" ]; then
+          echo "错误: 未找到配置文件 ${{ env.CONFIG_FILE }}"
+          # ... 创建默认配置的代码保持不变
+        fi
+        
+        # 复制配置文件
+        echo "使用配置文件: ${{ env.CONFIG_FILE }}"
+        cp ${{ env.CONFIG_FILE }} ImmortalWrt/.config
+        
+        # ⚠️ 关键修改：自动从配置文件提取设备信息并设置单设备编译
+        cd ImmortalWrt
+        echo "======================================"
+        echo "配置单设备编译模式..."
+        echo "======================================"
+        
+        # 从配置文件中自动提取设备名称
+        DEVICE_LINE=$(grep "CONFIG_TARGET_.*_DEVICE_.*=y" .config | head -1)
+        if [ -n "$DEVICE_LINE" ]; then
+          # 提取设备名称 (例如: cmcc_rax3000m 或 jdcloud_re-cp-03)
+          DEVICE_NAME_EXTRACT=$(echo "$DEVICE_LINE" | sed -n 's/.*DEVICE_KATEX_INLINE_OPEN.*KATEX_INLINE_CLOSE=y/\1/p')
+          echo "检测到设备: $DEVICE_NAME_EXTRACT"
+          
+          # 设置单设备编译模式（模拟 menuconfig 的行为）
+          cat >> .config <<EOF
+        CONFIG_TARGET_MULTI_PROFILE=n
+        CONFIG_TARGET_PER_DEVICE_ROOTFS=y
+        CONFIG_TARGET_PROFILE="DEVICE_${DEVICE_NAME_EXTRACT}"
+        # CONFIG_TARGET_ALL_PROFILES is not set
+        EOF
+          
+          echo "已设置为单设备编译: DEVICE_${DEVICE_NAME_EXTRACT}"
+        else
+          echo "警告: 无法从配置文件中提取设备信息"
+        fi
+        
+        cd ..
+        
+        # 执行 Part2 脚本
+        chmod +x $DIY_P2_SH
+        cd ImmortalWrt
+        echo "======================================"
+        echo "执行自定义脚本 Part2..."
+        echo "======================================"
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: 设置LAN IP地址
+      run: |
+        cd ImmortalWrt
+        SET_IP="${{ github.event.inputs.LAN_IP }}"
+        if [ -z "$SET_IP" ]; then
+          SET_IP="192.168.1.1"
+        fi
+        
+        # 验证IP地址格式
+        if [[ $SET_IP =~ ^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; then
+            # 修改默认IP地址
+            sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" package/base-files/files/bin/config_generate
+            
+            # 修改LuCI相关IP
+            if [ -d "feeds/luci/modules/luci-mod-system" ]; then
+              find feeds/luci/modules/luci-mod-system -type f -name "flash.js" -exec sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" {} + 2>/dev/null || true
+            fi
+            
+            echo "IP_ADDR=$SET_IP" >> $GITHUB_ENV
+            echo "======================================"
+            echo "LAN IP 地址设置为: $SET_IP"
+            echo "======================================"
+        else
+            echo "IP_ADDR=192.168.1.1" >> $GITHUB_ENV
+            echo "IP地址格式无效，使用默认: 192.168.1.1"
+        fi
+
+    - name: SSH连接到Actions
+      uses: P3TERX/ssh2actions@v1.0.0
+      if: github.event.inputs.SSH_CONNECTION == 'true'
+      env:
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+
+        - name: 下载软件包
+      id: package
+      run: |
+        cd ImmortalWrt
+      
+        echo "======================================"
+        echo "应用配置选项..."
+        echo "======================================"
+        
+        # 先运行 oldconfig 处理配置依赖
+        make oldconfig
+        
+        # 再运行 defconfig 展开配置
+        make defconfig
+        
+        # 验证配置
+        echo "======================================"
+        echo "验证编译配置..."
+        echo "======================================"
+        
+        # 显示目标设备
+        echo "目标设备："
+        grep "CONFIG_TARGET_.*_DEVICE_.*=y" .config || echo "未找到设备配置"
+        
+        # 确认编译模式
+        echo "编译模式："
+        if grep -q "CONFIG_TARGET_MULTI_PROFILE=n" .config; then
+          echo "✅ 单设备编译模式"
+        else
+          echo "⚠️ 多设备编译模式"
+        fi
+        
+        # 显示 PROFILE 设置
+        echo "Profile 设置："
+        grep "CONFIG_TARGET_PROFILE" .config || echo "未设置 Profile"
+        
+        echo "======================================"
+        
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+        echo "======================================"
+        echo "软件包下载完成"
+        echo "======================================"
+        
+    - name: 编译固件
+      id: compile
+      run: |
+        cd ImmortalWrt
+        echo -e "$(nproc) 线程编译"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "======================================"
+        echo "固件编译完成"
+        echo "======================================"
+
+    - name: 检查磁盘使用情况
+      if: (!cancelled())
+      run: df -hT
+
+    - name: 上传bin目录
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && github.event.inputs.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: ImmortalWrt_bin_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        path: ImmortalWrt/bin
+
+    - name: 整理固件文件
+      id: organize
+      if: github.event.inputs.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd ImmortalWrt/bin/targets/*/*
+        rm -rf packages
+        # 删除不需要的文件
+        find . -type f -name "*.buildinfo" -o -name "*.manifest" -o -name "*kernel.bin" -o -name "*rootfs.tar.gz" -o -name "*.dtb" | xargs rm -f
+        # 重命名固件文件
+        for file in *; do
+          if [[ -f "$file" ]]; then
+            new_name="${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-${file#*${{ env.DEVICE_NAME }}-}"
+            mv "$file" "$new_name" 2>/dev/null || mv "$file" "${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-$file"
+          fi
+        done
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "======================================"
+        echo "固件整理完成，文件列表："
+        ls -lh
+        echo "======================================"
+
+    - name: 上传固件到Artifacts
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && github.event.inputs.UPLOAD_FIRMWARE == 'true'
+      with:
+        name: ${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-Firmware
+        path: ${{ env.FIRMWARE }}
+
+    - name: 生成发布标签
+      id: tag
+      if: github.event.inputs.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+        echo "release_tag=${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
+        
+        # 生成发布说明
+        cat > release.txt <<EOF
+        # ${{ env.DEVICE_FULL_NAME }} 固件
+        
+        ## 📋 固件信息
+        
+        - **设备型号**: ${{ env.DEVICE_FULL_NAME }}
+        - **目标平台**: ${{ env.TARGET_NAME }}
+        - **编译时间**: ${{ env.FILE_DATE }}
+        - **登录地址**: ${{ env.IP_ADDR }}
+        - **默认密码**: 无密码或 password
+        
+        ## 📦 源码信息
+        
+        - **源码仓库**: ${{ env.REPO_URL }}
+        - **源码分支**: ${{ env.REPO_BRANCH }}
+        
+        ## ✨ 主要功能
+        
+        根据配置文件包含的插件：
+        - LuCI 管理界面
+        - Lucky 动态域名
+        - OpenAppFilter 应用过滤
+        - Docker 容器管理（如已选择）
+        - PassWall / OpenClash（如已选择）
+        - 其他自定义插件
+        
+        ## 📝 刷机说明
+        
+        ### 原厂固件刷入
+        1. 下载对应的 \`factory.bin\` 文件
+        2. 进入原厂固件管理界面
+        3. 选择固件升级，上传文件
+        4. 等待刷机完成，自动重启
+        
+        ### ImmortalWrt 升级
+        1. 下载对应的 \`sysupgrade.bin\` 文件
+        2. 进入 系统 → 备份/升级
+        3. 上传固件文件
+        4. 取消勾选"保留配置"（如需全新安装）
+        5. 点击"刷写固件"
+        
+        ## ⚠️ 注意事项
+        
+        - 刷机有风险，请确保设备型号正确
+        - 建议先备份原厂固件和重要配置
+        - 刷机过程中请勿断电
+        - 如遇问题可尝试恢复模式重刷
+        
+        ## 🔗 相关链接
+        
+        - [ImmortalWrt 官网](https://immortalwrt.org)
+        - [问题反馈](https://github.com/${{ github.repository }}/issues)
+        
+        ---
+        *此固件由 GitHub Actions 自动编译*
+        EOF
+
+    - name: 发布固件到Release
+      uses: softprops/action-gh-release@v2.1.0
+      if: steps.tag.outputs.status == 'success' && github.event.inputs.UPLOAD_RELEASE == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ env.FIRMWARE }}/*
+        name: ${{ env.DEVICE_FULL_NAME }} - ${{ env.FILE_DATE }}
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        draft: false
+        prerelease: false
+
+    - name: 删除旧的workflow运行记录
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 7
+        keep_minimum_runs: 10
+
+    - name: 删除旧的Releases
+      uses: dev-drprasad/delete-older-releases@v0.3.2
+      if: github.event.inputs.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 10
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
