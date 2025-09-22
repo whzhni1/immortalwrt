@@ -449,16 +449,7 @@ jobs:
         - **源码仓库**: ${{ env.REPO_URL }}
         - **源码分支**: ${{ env.REPO_BRANCH }}
         
-        ## ✨ 主要功能
-        
-        根据配置文件包含的插件：
-        - LuCI 管理界面
-        - Lucky 动态域名
-        - OpenAppFilter 应用过滤
-        - Docker 容器管理（如已选择）
-        - PassWall / OpenClash（如已选择）
-        - 其他自定义插件
-        
+
         ## 📝 刷机说明
         
         ### 原厂固件刷入
