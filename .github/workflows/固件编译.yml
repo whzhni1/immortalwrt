@@ -8,7 +8,7 @@
 # Description: Build ImmortalWrt for Multiple Devices
 #
 
-name: 编译 ImmortalWrt 固件
+name: 编译 ImmortalWrt 固件1
 
 on:
   repository_dispatch:
