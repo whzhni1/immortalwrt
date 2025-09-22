@@ -306,31 +306,24 @@ jobs:
         echo "使用配置文件: ${{ env.CONFIG_FILE }}"
         cp ${{ env.CONFIG_FILE }} ImmortalWrt/.config
         
-        # ⚠️ 关键修改：自动从配置文件提取设备信息并设置单设备编译
+        # ⚠️ 使用已有的环境变量（更简单可靠）
         cd ImmortalWrt
         echo "======================================"
         echo "配置单设备编译模式..."
         echo "======================================"
         
-        # 从配置文件中自动提取设备名称
-        DEVICE_LINE=$(grep "CONFIG_TARGET_.*_DEVICE_.*=y" .config | head -1)
-        if [ -n "$DEVICE_LINE" ]; then
-          # 提取设备名称 (例如: cmcc_rax3000m 或 jdcloud_re-cp-03)
-          DEVICE_NAME_EXTRACT=$(echo "$DEVICE_LINE" | sed -n 's/.*DEVICE_KATEX_INLINE_OPEN.*KATEX_INLINE_CLOSE=y/\1/p')
-          echo "检测到设备: $DEVICE_NAME_EXTRACT"
-          
-          # 设置单设备编译模式（模拟 menuconfig 的行为）
-          cat >> .config <<EOF
+        # 直接使用环境变量中的设备名称
+        echo "设备名称: ${{ env.DEVICE_NAME }}"
+        
+        # 设置单设备编译模式
+        cat >> .config <<EOF
         CONFIG_TARGET_MULTI_PROFILE=n
         CONFIG_TARGET_PER_DEVICE_ROOTFS=y
-        CONFIG_TARGET_PROFILE="DEVICE_${DEVICE_NAME_EXTRACT}"
+        CONFIG_TARGET_PROFILE="DEVICE_${{ env.DEVICE_NAME }}"
         # CONFIG_TARGET_ALL_PROFILES is not set
         EOF
-          
-          echo "已设置为单设备编译: DEVICE_${DEVICE_NAME_EXTRACT}"
-        else
-          echo "警告: 无法从配置文件中提取设备信息"
-        fi
+        
+        echo "已设置为单设备编译: DEVICE_${{ env.DEVICE_NAME }}"
         
         cd ..
         
