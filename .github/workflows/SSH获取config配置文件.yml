@@ -96,5 +96,4 @@ jobs:
         tag_name: config-${{ env.CONFIG_NAME }}
         files: /tmp/${{ env.CONFIG_NAME }}.config
 
-    - name: 完成提示
-      run: echo "✅ 配置完成: $CONFIG_NAME.config"
+    
