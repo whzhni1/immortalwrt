@@ -122,25 +122,20 @@ jobs:
       run: |
         cd ImmortalWrt
         rm -f .config
-
+        
         if [ -z "$DEVICE_PROFILE" ]; then
           echo "未指定设备型号，使用默认最小配置..."
-          cat >> .config <<EOF
-          CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_filogic=y
-          # 用户后续可手动修改
-          EOF
+          echo "CONFIG_TARGET_mediatek=y" >> .config
+          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+          echo "# 用户后续可手动修改" >> .config
           make defconfig
         else
           echo "使用设备型号: $DEVICE_PROFILE"
-          cat >> .config <<EOF
-          CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_mediatek_filogic_DEVICE_${DEVICE_PROFILE}=y
-          EOF
+          echo "CONFIG_TARGET_mediatek=y" >> .config
+          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+          echo "CONFIG_TARGET_mediatek_filogic_DEVICE_${DEVICE_PROFILE}=y" >> .config
           make defconfig
         fi
-
 
     - name: 检查并准备配置文件
       run: |
@@ -158,13 +153,13 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: config-${{ env.CONFIG_NAME }}-$(date +%Y%m%d-%H%M%S)
+        tag_name: config-${{ env.CONFIG_NAME }}-${{ github.run_number }}
         release_name: "配置文件 - ${{ env.CONFIG_NAME }}"
         body: |
           通过菜单配置生成的配置文件
           
           生成信息:
-          - 时间: $(date)
+          - 时间: ${{ github.event.head_commit.timestamp }}
           - 源码版本: ${{ env.REPO_BRANCH }}
           - 自定义插件库: ${{ env.LOAD_CUSTOM_FEEDS }}
           - 配置文件: ${{ env.CONFIG_NAME }}.config
