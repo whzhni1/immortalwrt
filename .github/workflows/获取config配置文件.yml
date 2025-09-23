@@ -200,25 +200,8 @@ jobs:
         | **配置文件** | $CONFIG_NAME.config |
         | **设备型号** | ${DEVICE_PROFILE:-未指定} |
         
-        ## 📥 下载文件
-        
-        点击下方的 **$CONFIG_NAME.config** 文件下载配置
-        
-        ## 📖 使用说明
-        
-        1. 下载配置文件 \`$CONFIG_NAME.config\`
-        2. 重命名为对应设备的配置文件名：
-           - RAX3000M: 重命名为 \`rax3000m.config\`
-           - AX6000: 重命名为 \`ax6000.config\`
-        3. 将配置文件放在编译仓库的根目录
-        4. 触发编译工作流使用此配置
-        
-        ## 🔗 源码地址
-        
         本配置基于: [$REPO_URL/tree/$REPO_TAG]($REPO_URL/tree/$REPO_TAG)
-        
         ---
-        *自动生成于 GitHub Actions*
         END
         
         echo "发布说明已生成"
