@@ -9,7 +9,7 @@ on:
         default: 'immortalwrt-24.10'
         type: string
       CONFIG_NAME:
-        description: '输入配置文件名（不含.config后缀）'
+        description: '设置配置文件名（不含.config后缀）'
         required: true
         default: 'my-config'
         type: string
