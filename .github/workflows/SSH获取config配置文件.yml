@@ -1,0 +1,228 @@
+name: SSH获取配置文件
+
+on:
+  workflow_dispatch:
+    inputs:
+      REPO_VERSION:
+        description: '选择 ImmortalWrt 版本'
+        required: false
+        default: 'immortalwrt-24.10'
+        type: string
+      CONFIG_NAME:
+        description: '输入配置文件名（不含.config后缀）'
+        required: true
+        default: 'my-config'
+        type: string
+      LOAD_CUSTOM_FEEDS:
+        description: '加载自定义插件库（执行part1.sh）'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  TZ: Asia/Shanghai
+
+jobs:
+  pure-menuconfig:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    
+    steps:
+    - name: 检查项目分支
+      uses: actions/checkout@main
+
+    - name: 设置变量
+      run: |
+        REPO_BRANCH="${{ github.event.inputs.REPO_VERSION || 'immortalwrt-24.10' }}"
+        CONFIG_NAME="${{ github.event.inputs.CONFIG_NAME }}"
+        LOAD_CUSTOM_FEEDS="${{ github.event.inputs.LOAD_CUSTOM_FEEDS }}"
+        
+        echo "REPO_BRANCH=$REPO_BRANCH" >> $GITHUB_ENV
+        echo "CONFIG_NAME=$CONFIG_NAME" >> $GITHUB_ENV
+        echo "LOAD_CUSTOM_FEEDS=$LOAD_CUSTOM_FEEDS" >> $GITHUB_ENV
+        
+        echo "源码版本: $REPO_BRANCH"
+        echo "配置文件名: $CONFIG_NAME.config"
+        echo "加载自定义插件库: $LOAD_CUSTOM_FEEDS"
+
+    - name: 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libncurses5-dev \
+          git \
+          python3 \
+          rsync
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: 下载源码
+      working-directory: /workdir
+      run: |
+        echo "正在克隆 ImmortalWrt 源码..."
+        echo "版本: $REPO_BRANCH"
+        
+        git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt || {
+          echo "指定分支不存在，尝试使用默认分支"
+          git clone --depth 1 "$REPO_URL" ImmortalWrt
+          cd ImmortalWrt
+          git checkout "$REPO_BRANCH" 2>/dev/null || echo "使用默认分支"
+          cd ..
+        }
+        
+        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+        echo "源码准备完成"
+
+    - name: 加载自定义插件库（如果启用）
+      if: env.LOAD_CUSTOM_FEEDS == 'true'
+      run: |
+        echo "正在加载自定义插件库..."
+        cd ImmortalWrt
+        
+        # 检查是否存在part1.sh
+        if [ -f "$GITHUB_WORKSPACE/part1.sh" ]; then
+          echo "执行 part1.sh..."
+          chmod +x "$GITHUB_WORKSPACE/part1.sh"
+          "$GITHUB_WORKSPACE/part1.sh"
+          echo "自定义插件库加载完成"
+        else
+          echo "未找到 part1.sh，跳过自定义插件库加载"
+        fi
+
+    - name: 更新并安装feeds
+      run: |
+        cd ImmortalWrt
+        echo "更新feeds..."
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        echo "feeds更新完成"
+
+    - name: 初始化配置环境
+      run: |
+        cd ImmortalWrt
+        echo "初始化配置环境..."
+        # 清理任何现有配置
+        rm -f .config .config.old
+        echo "环境准备完成，可进行菜单配置"
+
+    - name: SSH连接进行纯净菜单配置
+      uses: P3TERX/ssh2actions@v1.0.0
+      env:
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      with:
+        command: |
+          cd /workdir/ImmortalWrt
+          echo "=========================================="
+          echo "       纯净菜单配置模式"
+          echo "=========================================="
+          echo "源码版本: $REPO_BRANCH"
+          echo "自定义插件库: $LOAD_CUSTOM_FEEDS"
+          echo ""
+          
+          if [ "$LOAD_CUSTOM_FEEDS" = "true" ]; then
+            echo "✅ 已加载自定义插件库"
+            echo "可用插件已包含part1.sh中定义的仓库"
+          else
+            echo "ℹ️  仅使用官方插件库"
+          fi
+          
+          echo ""
+          echo "请按以下步骤操作："
+          echo "1. 运行: make menuconfig"
+          echo "2. 在菜单中选择:"
+          echo "   - Target System: MediaTek Ralink ARM"
+          echo "   - Subtarget: 根据设备选择"
+          echo "   - Target Profile: 选择具体设备"
+          echo "   - 选择需要的软件包"
+          echo "3. 按ESC退出，选择Yes保存配置"
+          echo "4. 运行: exit 退出SSH会话"
+          echo ""
+          echo "配置将自动保存到GitHub Release"
+          echo "=========================================="
+          
+          # 设置环境变量
+          export TERM=xterm-256color
+          export PS1='[\u@menuconfig \W]\$ '
+          
+          # 保持SSH会话
+          while true; do
+            sleep 3600
+          done
+
+    - name: 检查并准备配置文件
+      run: |
+        cd ImmortalWrt
+        if [ ! -f .config ]; then
+          echo "❌ 未生成配置文件，请确保在menuconfig中保存了配置"
+          exit 1
+        fi
+        
+        echo "✅ 检测到配置文件"
+        echo "配置文件内容摘要:"
+        echo "=========================================="
+        # 显示关键配置信息
+        echo "目标设备:"
+        grep -E "CONFIG_TARGET.*DEVICE.*=y" .config || echo "未设置设备"
+        echo ""
+        echo "选择的软件包数量:"
+        grep -c "CONFIG_PACKAGE.*=y" .config || echo "0"
+        echo "=========================================="
+        
+        # 重命名配置文件
+        cp .config "/tmp/$CONFIG_NAME.config"
+        echo "配置文件已保存为: $CONFIG_NAME.config"
+
+    - name: 创建配置发布版本
+      id: create-release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: config-${{ env.CONFIG_NAME }}-$(date +%Y%m%d-%H%M%S)
+        release_name: "配置文件 - ${{ env.CONFIG_NAME }}"
+        body: |
+          通过菜单配置生成的配置文件
+          
+          生成信息:
+          - 时间: $(date)
+          - 源码版本: ${{ env.REPO_BRANCH }}
+          - 自定义插件库: ${{ env.LOAD_CUSTOM_FEEDS }}
+          - 配置文件: ${{ env.CONFIG_NAME }}.config
+          
+          使用说明:
+          1. 下载此配置文件
+          2. 重命名为: rax3000m.config 或 ax6000.config
+          3. 放在编译仓库的根目录
+          4. 触发编译工作流即可使用此配置
+          
+          注: 此配置基于 ${{ env.REPO_BRANCH }} 版本生成
+        draft: false
+        prerelease: false
+
+    - name: 上传配置文件到Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create-release.outputs.upload_url }}
+        asset_path: /tmp/${{ env.CONFIG_NAME }}.config
+        asset_name: ${{ env.CONFIG_NAME }}.config
+        asset_content_type: text/plain
+
+    - name: 显示完成信息
+      run: |
+        echo "=========================================="
+        echo "           配置完成"
+        echo "=========================================="
+        echo "✅ 配置文件已生成并上传到Release"
+        echo "📁 文件名: $CONFIG_NAME.config"
+        echo "🔗 下载地址: ${{ steps.create-release.outputs.html_url }}"
+        echo "📚 源码版本: $REPO_BRANCH"
+        echo "🔌 自定义插件: $LOAD_CUSTOM_FEEDS"
+        echo ""
+        echo "=========================================="
