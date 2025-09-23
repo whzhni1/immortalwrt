@@ -1,12 +1,12 @@
-name: SSH获取配置文件
+name: 纯菜单配置模式
 
 on:
   workflow_dispatch:
     inputs:
       REPO_VERSION:
-        description: '输入 ImmortalWrt 版本（如V24.10.2）'
+        description: '输入 ImmortalWrt 版本（如 v24.10.2）'
         required: false
-        default: 'V24.10'
+        default: 'v24.10.2'
         type: string
       CONFIG_NAME:
         description: '设置配置文件名（不含.config后缀）'
@@ -34,7 +34,15 @@ jobs:
 
     - name: 设置变量
       run: |
-        REPO_BRANCH="${{ github.event.inputs.REPO_VERSION || 'immortalwrt-24.10' }}"
+        # 处理版本输入（直接使用 v24.10 格式的标签）
+        REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        if [ -z "$REPO_VERSION" ]; then
+          REPO_VERSION="v24.10"
+        fi
+        
+        # 直接使用输入的标签/分支名
+        REPO_BRANCH="$REPO_VERSION"
+        
         CONFIG_NAME="${{ github.event.inputs.CONFIG_NAME }}"
         LOAD_CUSTOM_FEEDS="${{ github.event.inputs.LOAD_CUSTOM_FEEDS }}"
         
@@ -42,7 +50,7 @@ jobs:
         echo "CONFIG_NAME=$CONFIG_NAME" >> $GITHUB_ENV
         echo "LOAD_CUSTOM_FEEDS=$LOAD_CUSTOM_FEEDS" >> $GITHUB_ENV
         
-        echo "源码版本: $REPO_BRANCH"
+        echo "使用版本: $REPO_BRANCH"
         echo "配置文件名: $CONFIG_NAME.config"
         echo "加载自定义插件库: $LOAD_CUSTOM_FEEDS"
 
@@ -64,15 +72,19 @@ jobs:
       working-directory: /workdir
       run: |
         echo "正在克隆 ImmortalWrt 源码..."
-        echo "版本: $REPO_BRANCH"
+        echo "版本/标签: $REPO_BRANCH"
         
-        git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt || {
-          echo "指定分支不存在，尝试使用默认分支"
+        # 直接使用输入的标签/分支名
+        if git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt; then
+          echo "✅ 源码克隆成功: 使用 $REPO_BRANCH"
+        else
+          echo "❌ 标签/分支 '$REPO_BRANCH' 不存在，尝试默认分支..."
           git clone --depth 1 "$REPO_URL" ImmortalWrt
           cd ImmortalWrt
-          git checkout "$REPO_BRANCH" 2>/dev/null || echo "使用默认分支"
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+          echo "使用默认分支: $DEFAULT_BRANCH"
           cd ..
-        }
+        fi
         
         ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
         echo "源码准备完成"
@@ -222,7 +234,12 @@ jobs:
         echo "✅ 配置文件已生成并上传到Release"
         echo "📁 文件名: $CONFIG_NAME.config"
         echo "🔗 下载地址: ${{ steps.create-release.outputs.html_url }}"
-        echo "📚 源码版本: $REPO_BRANCH"
+        echo "🏷️  源码版本: $REPO_BRANCH"
         echo "🔌 自定义插件: $LOAD_CUSTOM_FEEDS"
         echo ""
+        echo "使用说明:"
+        echo "1. 下载上面的配置文件"
+        echo "2. 重命名为对应设备名.config"
+        echo "3. 放入仓库根目录"
+        echo "4. 触发编译工作流"
         echo "=========================================="
