@@ -27,10 +27,10 @@ jobs:
   pure-menuconfig:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
-    
     steps:
     - name: 检查项目分支
       uses: actions/checkout@main
+          
 
     - name: 设置变量
       run: |
@@ -90,7 +90,9 @@ jobs:
       with:
         limit-access-to-actor: true
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        timeout: 60
+      env:
+        TMATE_PRINT_CONNECTION: true
+
 
     - name: 检查并保存配置
       run: |
