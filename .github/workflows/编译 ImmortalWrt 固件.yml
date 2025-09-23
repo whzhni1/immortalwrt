@@ -237,44 +237,6 @@ jobs:
         echo "克隆状态: $CLONE_STATUS"
         echo "======================================"
 
-    - name: 创建默认脚本
-      run: |
-        # 如果 part1.sh 不存在，创建默认的
-        if [ ! -f $DIY_P1_SH ]; then
-          echo "创建默认 part1.sh 脚本..."
-          cat > $DIY_P1_SH <<'EOF'
-        #!/bin/bash
-        # DIY Part1 - 在更新feeds前执行
-        
-        # Uncomment a feed source
-        #sed -i 's/^#KATEX_INLINE_OPEN.*helloworldKATEX_INLINE_CLOSE/\1/' feeds.conf.default
-        
-        # Add feed sources
-        #echo 'src-git helloworld https://github.com/fw876/helloworld' >> feeds.conf.default
-        #echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >> feeds.conf.default
-        
-        # Add packages
-        git clone --depth=1 https://github.com/gdy666/luci-app-lucky package/lucky
-        git clone --depth=1 https://github.com/destan19/OpenAppFilter package/OpenAppFilter
-        
-        echo "Part1 脚本执行完成!"
-        EOF
-        fi
-        
-        # 如果 part2.sh 不存在，创建默认的
-        if [ ! -f $DIY_P2_SH ]; then
-          echo "创建默认 part2.sh 脚本..."
-          cat > $DIY_P2_SH <<'EOF'
-        #!/bin/bash
-        # DIY Part2 - 在更新feeds后执行
-        
-        # Modify default settings
-        # sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
-        
-        echo "Part2 脚本执行完成!"
-        EOF
-        fi
-
     - name: 加载自定义feeds和执行脚本Part1
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF Immortalwrt/feeds.conf.default
