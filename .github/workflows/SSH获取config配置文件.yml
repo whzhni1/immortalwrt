@@ -85,15 +85,12 @@ jobs:
         rm -f .config .config.old
         echo "环境准备完成"
 
-    - name: SSH连接配置
-      uses: DamianReeves/write-file-action@v1.0
+    - name: 等待手动配置（SSH）
+      uses: mxschmitt/action-tmate@v3
       with:
-        # 这个Action更稳定
-        path: /tmp/wait-for-ssh
-        contents: |
-          # 等待用户手动配置
-          echo "请运行: make menuconfig"
-          sleep 3600
+        limit-access-to-actor: true
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        timeout: 60
 
     - name: 检查并保存配置
       run: |
