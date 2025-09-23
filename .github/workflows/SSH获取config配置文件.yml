@@ -1,4 +1,4 @@
-name: 纯菜单配置模式（使用tmate v3）
+name: 纯菜单配置模式
 
 on:
   workflow_dispatch:
@@ -18,6 +18,11 @@ on:
         required: false
         default: false
         type: boolean
+      DEVICE_PROFILE:   # ⭐ 新增输入
+        description: '设备型号（如 rax3000m / ax6000），留空则进入 menuconfig 手动选择'
+        required: false
+        default: ''
+        type: string
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -34,23 +39,37 @@ jobs:
 
     - name: 设置变量
       run: |
-        REPO_VERSION="${{ github.event.inputs.REPO_VERSION || 'v24.10' }}"
+        REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        if [ -z "$REPO_VERSION" ]; then
+          REPO_VERSION="v24.10"
+        fi
+        REPO_BRANCH="$REPO_VERSION"
+        
         CONFIG_NAME="${{ github.event.inputs.CONFIG_NAME }}"
         LOAD_CUSTOM_FEEDS="${{ github.event.inputs.LOAD_CUSTOM_FEEDS }}"
+        DEVICE_PROFILE="${{ github.event.inputs.DEVICE_PROFILE }}"
         
-        echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
+        echo "REPO_BRANCH=$REPO_BRANCH" >> $GITHUB_ENV
         echo "CONFIG_NAME=$CONFIG_NAME" >> $GITHUB_ENV
         echo "LOAD_CUSTOM_FEEDS=$LOAD_CUSTOM_FEEDS" >> $GITHUB_ENV
+        echo "DEVICE_PROFILE=$DEVICE_PROFILE" >> $GITHUB_ENV
         
-        echo "使用版本: $REPO_VERSION"
+        echo "使用版本: $REPO_BRANCH"
         echo "配置文件名: $CONFIG_NAME.config"
+        echo "加载自定义插件库: $LOAD_CUSTOM_FEEDS"
+        echo "设备型号: $DEVICE_PROFILE"
 
     - name: 初始化编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libncurses5-dev git
+        sudo apt-get install -y \
+          build-essential \
+          libncurses5-dev \
+          git \
+          python3 \
+          rsync
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
@@ -58,19 +77,33 @@ jobs:
       working-directory: /workdir
       run: |
         echo "正在克隆 ImmortalWrt 源码..."
-        git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt || {
-          echo "使用默认分支"
+        echo "版本/标签: $REPO_BRANCH"
+        
+        if git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt; then
+          echo "✅ 源码克隆成功: 使用 $REPO_BRANCH"
+        else
+          echo "❌ 标签/分支 '$REPO_BRANCH' 不存在，尝试默认分支..."
           git clone --depth 1 "$REPO_URL" ImmortalWrt
-        }
+          cd ImmortalWrt
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+          echo "使用默认分支: $DEFAULT_BRANCH"
+          cd ..
+        fi
+        
         ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+        echo "源码准备完成"
 
     - name: 加载自定义插件库（如果启用）
       if: env.LOAD_CUSTOM_FEEDS == 'true'
       run: |
+        echo "正在加载自定义插件库..."
         cd ImmortalWrt
         if [ -f "$GITHUB_WORKSPACE/part1.sh" ]; then
           chmod +x "$GITHUB_WORKSPACE/part1.sh"
           "$GITHUB_WORKSPACE/part1.sh"
+          echo "自定义插件库加载完成"
+        else
+          echo "未找到 part1.sh，跳过"
         fi
 
     - name: 更新并安装feeds
@@ -85,42 +118,77 @@ jobs:
         rm -f .config .config.old
         echo "环境准备完成"
 
-    - name: 等待手动配置（SSH / Web）
-      uses: mxschmitt/action-tmate@v2
-      with:
-        limit-access-to-actor: true
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-      env:
-        TMATE_PRINT_CONNECTION: true
-
-    - name: 检查并保存配置
+    - name: 生成配置文件
       run: |
         cd ImmortalWrt
-        if [ -f .config ]; then
-          echo "✅ 找到配置文件"
-          cp .config "/tmp/$CONFIG_NAME.config"
-          
-          # 显示配置摘要
-          echo "配置摘要:"
-          grep -E "CONFIG_TARGET.*=y" .config || echo "无目标配置"
-          echo "包数量: $(grep -c "CONFIG_PACKAGE.*=y" .config || echo "0")"
+        if [ -z "$DEVICE_PROFILE" ]; then
+          echo "未指定设备型号，进入 menuconfig..."
+          yes "" | make menuconfig   # 自动进入并直接保存默认配置
         else
-          echo "❌ 未找到配置文件"
-          exit 1
+          echo "使用设备型号: $DEVICE_PROFILE"
+          make defconfig
+          # 这里可以根据型号写入配置，例如：
+          echo "CONFIG_TARGET_DEVICE_$DEVICE_PROFILE=y" >> .config
+          make defconfig
         fi
 
-    - name: 上传配置到Release
-      uses: softprops/action-gh-release@v1
-      if: success()
-      with:
-        tag_name: config-${{ env.CONFIG_NAME }}-${{ github.run_id }}
-        name: "配置-${{ env.CONFIG_NAME }}"
-        body: |
-          生成时间: ${{ github.run_id }}
-          源码版本: ${{ env.REPO_BRANCH }}
-          自定义插件库: ${{ env.LOAD_CUSTOM_FEEDS }}
-        files: /tmp/${{ env.CONFIG_NAME }}.config
-
-    - name: 完成提示
+    - name: 检查并准备配置文件
       run: |
-        echo "✅ 配置完成！文件: $CONFIG_NAME.config"
+        cd ImmortalWrt
+        if [ ! -f .config ]; then
+          echo "❌ 未生成配置文件"
+          exit 1
+        fi
+        cp .config "/tmp/$CONFIG_NAME.config"
+        echo "✅ 配置文件已保存为: $CONFIG_NAME.config"
+
+    - name: 创建配置发布版本
+      id: create-release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: config-${{ env.CONFIG_NAME }}-$(date +%Y%m%d-%H%M%S)
+        release_name: "配置文件 - ${{ env.CONFIG_NAME }}"
+        body: |
+          通过菜单配置生成的配置文件
+          
+          生成信息:
+          - 时间: $(date)
+          - 源码版本: ${{ env.REPO_BRANCH }}
+          - 自定义插件库: ${{ env.LOAD_CUSTOM_FEEDS }}
+          - 配置文件: ${{ env.CONFIG_NAME }}.config
+          - 设备型号: ${{ env.DEVICE_PROFILE }}
+          
+          使用说明:
+          1. 下载此配置文件
+          2. 重命名为: rax3000m.config 或 ax6000.config
+          3. 放在编译仓库的根目录
+          4. 触发编译工作流即可使用此配置
+          
+          注: 此配置基于 ${{ env.REPO_BRANCH }} 版本生成
+        draft: false
+        prerelease: false
+
+    - name: 上传配置文件到Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create-release.outputs.upload_url }}
+        asset_path: /tmp/${{ env.CONFIG_NAME }}.config
+        asset_name: ${{ env.CONFIG_NAME }}.config
+        asset_content_type: text/plain
+
+    - name: 显示完成信息
+      run: |
+        echo "=========================================="
+        echo "           配置完成"
+        echo "=========================================="
+        echo "✅ 配置文件已生成并上传到Release"
+        echo "📁 文件名: $CONFIG_NAME.config"
+        echo "🔗 下载地址: ${{ steps.create-release.outputs.html_url }}"
+        echo "🏷️  源码版本: $REPO_BRANCH"
+        echo "🔌 自定义插件: $LOAD_CUSTOM_FEEDS"
+        echo "📦 设备型号: $DEVICE_PROFILE"
+        echo "=========================================="
