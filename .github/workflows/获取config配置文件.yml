@@ -46,7 +46,8 @@ jobs:
       run: |
         REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
         if [ -z "$REPO_VERSION" ]; then
-          REPO_VERSION="v24.10"
+          echo "❌ 版本为空或者无效"
+          exit 1
         fi
         REPO_TAG="$REPO_VERSION"
         
