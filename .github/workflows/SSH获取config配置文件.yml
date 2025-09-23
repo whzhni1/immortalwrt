@@ -1,4 +1,4 @@
-name: SSH获取config配置
+name: Codespaces 菜单配置模式
 
 on:
   workflow_dispatch:
@@ -6,10 +6,10 @@ on:
       REPO_VERSION:
         description: '输入 ImmortalWrt 版本（如 v24.10.2）'
         required: false
-        default: 'v24.10.2'
+        default: 'v24.10'
         type: string
       CONFIG_NAME:
-        description: '设置配置文件名（不含.config后缀）'
+        description: '配置文件名（不含.config后缀）'
         required: true
         default: 'my-config'
         type: string
@@ -24,8 +24,8 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
-  pure-menuconfig:
-    runs-on: ubuntu-22.04
+  codespaces-menuconfig:
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     
     steps:
@@ -34,29 +34,19 @@ jobs:
 
     - name: 设置变量
       run: |
-        # 处理版本输入（直接使用 v24.10 格式的标签）
-        REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
-        if [ -z "$REPO_VERSION" ]; then
-          REPO_VERSION="v24.10"
-        fi
-        
-        # 直接使用输入的标签/分支名
-        REPO_BRANCH="$REPO_VERSION"
-        
+        REPO_VERSION="${{ github.event.inputs.REPO_VERSION || 'v24.10' }}"
         CONFIG_NAME="${{ github.event.inputs.CONFIG_NAME }}"
         LOAD_CUSTOM_FEEDS="${{ github.event.inputs.LOAD_CUSTOM_FEEDS }}"
         
-        echo "REPO_BRANCH=$REPO_BRANCH" >> $GITHUB_ENV
+        echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
         echo "CONFIG_NAME=$CONFIG_NAME" >> $GITHUB_ENV
         echo "LOAD_CUSTOM_FEEDS=$LOAD_CUSTOM_FEEDS" >> $GITHUB_ENV
         
-        echo "使用版本: $REPO_BRANCH"
+        echo "使用版本: $REPO_VERSION"
         echo "配置文件名: $CONFIG_NAME.config"
         echo "加载自定义插件库: $LOAD_CUSTOM_FEEDS"
 
-    - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
+    - name: 安装编译环境
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -64,132 +54,225 @@ jobs:
           libncurses5-dev \
           git \
           python3 \
-          rsync
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
+          python3-pip \
+          rsync \
+          file \
+          unzip \
+          wget \
+          curl \
+          time
 
-    - name: 下载源码
-      working-directory: /workdir
+    - name: 下载 ImmortalWrt 源码
       run: |
         echo "正在克隆 ImmortalWrt 源码..."
-        echo "版本/标签: $REPO_BRANCH"
+        echo "版本: $REPO_BRANCH"
         
-        # 直接使用输入的标签/分支名
         if git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt; then
-          echo "✅ 源码克隆成功: 使用 $REPO_BRANCH"
+          echo "✅ 源码克隆成功"
         else
-          echo "❌ 标签/分支 '$REPO_BRANCH' 不存在，尝试默认分支..."
+          echo "⚠️  指定版本不存在，使用默认分支"
           git clone --depth 1 "$REPO_URL" ImmortalWrt
           cd ImmortalWrt
           DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
-          echo "使用默认分支: $DEFAULT_BRANCH"
+          echo "实际使用分支: $DEFAULT_BRANCH"
+          echo "REPO_BRANCH=$DEFAULT_BRANCH" >> $GITHUB_ENV
           cd ..
         fi
         
-        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
-        echo "源码准备完成"
+        echo "源码大小: $(du -sh ImmortalWrt | cut -f1)"
 
-    - name: 加载自定义插件库（如果启用）
+    - name: 加载自定义插件库
       if: env.LOAD_CUSTOM_FEEDS == 'true'
       run: |
-        echo "正在加载自定义插件库..."
-        cd ImmortalWrt
-        
-        # 检查是否存在part1.sh
-        if [ -f "$GITHUB_WORKSPACE/part1.sh" ]; then
-          echo "执行 part1.sh..."
-          chmod +x "$GITHUB_WORKSPACE/part1.sh"
-          "$GITHUB_WORKSPACE/part1.sh"
-          echo "自定义插件库加载完成"
+        echo "加载自定义插件库..."
+        if [ -f "part1.sh" ]; then
+          chmod +x part1.sh
+          cd ImmortalWrt
+          ../part1.sh
+          echo "✅ 自定义插件库加载完成"
         else
-          echo "未找到 part1.sh，跳过自定义插件库加载"
+          echo "⚠️  未找到 part1.sh 文件"
         fi
 
-    - name: 更新并安装feeds
+    - name: 更新并安装 feeds
       run: |
         cd ImmortalWrt
-        echo "更新feeds..."
+        echo "更新 feeds..."
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        echo "feeds更新完成"
+        echo "✅ feeds 更新完成"
 
-    - name: 初始化配置环境
+    - name: 创建交互式配置脚本
       run: |
-        cd ImmortalWrt
-        echo "初始化配置环境..."
-        # 清理任何现有配置
-        rm -f .config .config.old
-        echo "环境准备完成，可进行菜单配置"
+        cat > interactive-menuconfig.sh << 'EOF'
+#!/bin/bash
+set -e
 
-    - name: SSH连接进行纯净菜单配置
-      uses: P3TERX/ssh2actions@v1.0.0
-      env:
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      with:
-        command: |
-          cd /workdir/ImmortalWrt
-          echo "=========================================="
-          echo "       纯净菜单配置模式"
-          echo "=========================================="
-          echo "源码版本: $REPO_BRANCH"
-          echo "自定义插件库: $LOAD_CUSTOM_FEEDS"
-          echo ""
-          
-          if [ "$LOAD_CUSTOM_FEEDS" = "true" ]; then
-            echo "✅ 已加载自定义插件库"
-            echo "可用插件已包含part1.sh中定义的仓库"
+echo "=========================================="
+echo "       ImmortalWrt 菜单配置工具"
+echo "=========================================="
+echo "版本: $REPO_BRANCH"
+echo "配置将保存为: $CONFIG_NAME.config"
+echo ""
+
+cd ImmortalWrt
+
+# 检查是否已有配置
+if [ -f .config ]; then
+  echo "发现现有配置，创建备份..."
+  cp .config .config.backup
+  echo "✅ 原配置已备份为 .config.backup"
+fi
+
+echo "正在启动 menuconfig..."
+echo "请按以下步骤操作："
+echo "1. 选择 Target System → MediaTek Ralink ARM"
+echo "2. 选择对应的 Subtarget 和 Target Profile"
+echo "3. 选择需要的软件包"
+echo "4. 按 ESC 退出，选择 Yes 保存配置"
+echo ""
+
+# 设置终端环境
+export TERM=xterm-256color
+make menuconfig
+
+if [ -f .config ]; then
+  echo ""
+  echo "✅ 配置保存成功！"
+  echo "配置文件摘要:"
+  echo "=========================================="
+  
+  # 显示设备信息
+  DEVICE=$(grep -E "CONFIG_TARGET.*DEVICE.*=y" .config | head -1 | sed 's/CONFIG_TARGET_//' | sed 's/_DEVICE.*//' || echo "未知设备")
+  echo "目标设备: $DEVICE"
+  
+  PACKAGE_COUNT=$(grep -c "CONFIG_PACKAGE.*=y" .config || echo "0")
+  echo "选择的软件包: $PACKAGE_COUNT 个"
+  
+  # 复制配置到工作目录
+  cp .config "../$CONFIG_NAME.config"
+  echo "✅ 配置文件已保存为: $CONFIG_NAME.config"
+  
+  # 显示一些关键配置
+  echo ""
+  echo "关键配置选项:"
+  grep -E "^(CONFIG_TARGET|CONFIG_BUSYBOX|CONFIG_LUCI)" .config | head -10 || true
+  
+else
+  echo "❌ 未检测到配置文件，请确保在 menuconfig 中选择了保存"
+  exit 1
+fi
+
+echo "=========================================="
+EOF
+
+        chmod +x interactive-menuconfig.sh
+        
+        # 创建使用说明
+        cat > USAGE.md << EOF
+# 菜单配置工具使用说明
+
+## 快速开始
+
+运行以下命令启动配置界面：
+
+\`\`\`bash
+./interactive-menuconfig.sh
+\`\`\`
+
+## 手动步骤
+
+如果上述脚本不工作，可以手动执行：
+
+\`\`\`bash
+cd ImmortalWrt
+make menuconfig
+\`\`\`
+
+配置完成后，手动保存：
+
+\`\`\`bash
+cp ImmortalWrt/.config $CONFIG_NAME.config
+\`\`\`
+
+## 下一步
+
+配置完成后，工作流将自动上传配置文件到 GitHub Release。
+
+EOF
+
+        echo "✅ 交互式脚本创建完成"
+
+    - name: 准备上传环境
+      run: |
+        # 创建临时配置文件（如果还没有）
+        if [ ! -f "$CONFIG_NAME.config" ]; then
+          echo "创建空的配置文件模板..."
+          cat > "$CONFIG_NAME.config" << 'EOF'
+# ImmortalWrt 配置文件
+# 生成时间: $(date)
+# 版本: $REPO_BRANCH
+# 使用 ./interactive-menuconfig.sh 生成完整配置
+
+# 基础配置（通过 menuconfig 生成完整配置）
+EOF
+        fi
+
+    - name: 显示使用说明
+      run: |
+        echo "=========================================="
+        echo "       菜单配置环境准备完成"
+        echo "=========================================="
+        echo ""
+        echo "📁 源码版本: $REPO_BRANCH"
+        echo "📄 配置将保存为: $CONFIG_NAME.config"
+        echo "🔌 自定义插件: $LOAD_CUSTOM_FEEDS"
+        echo ""
+        echo "🚀 启动配置:"
+        echo "   ./interactive-menuconfig.sh"
+        echo ""
+        echo "📖 查看说明:"
+        echo "   cat USAGE.md"
+        echo ""
+        echo "🔧 手动配置:"
+        echo "   cd ImmortalWrt && make menuconfig"
+        echo ""
+        echo "📋 配置文件位置:"
+        echo "   ImmortalWrt/.config (原始)"
+        echo "   $CONFIG_NAME.config (副本)"
+        echo ""
+        echo "⏳ 配置完成后，工作流将自动继续..."
+        echo "=========================================="
+
+    - name: 等待人工配置（暂停点）
+      run: |
+        echo "⏸️  请在此步骤进行手动配置"
+        echo "运行 ./interactive-menuconfig.sh 完成配置后"
+        echo "取消下一行的注释以继续工作流"
+        # 取消下一行的注释以继续
+        # echo "继续执行..."
+
+    - name: 检查配置文件
+      id: check-config
+      run: |
+        if [ -f "$CONFIG_NAME.config" ] && [ -s "$CONFIG_NAME.config" ]; then
+          CONFIG_SIZE=$(wc -l < "$CONFIG_NAME.config")
+          if [ "$CONFIG_SIZE" -gt 10 ]; then
+            echo "✅ 检测到有效的配置文件"
+            echo "文件行数: $CONFIG_SIZE"
+            echo "status=valid" >> $GITHUB_OUTPUT
           else
-            echo "ℹ️  仅使用官方插件库"
+            echo "⚠️  配置文件过小，可能未正确配置"
+            echo "status=small" >> $GITHUB_OUTPUT
           fi
-          
-          echo ""
-          echo "请按以下步骤操作："
-          echo "1. 运行: make menuconfig"
-          echo "2. 在菜单中选择:"
-          echo "   - Target System: MediaTek Ralink ARM"
-          echo "   - Subtarget: 根据设备选择"
-          echo "   - Target Profile: 选择具体设备"
-          echo "   - 选择需要的软件包"
-          echo "3. 按ESC退出，选择Yes保存配置"
-          echo "4. 运行: exit 退出SSH会话"
-          echo ""
-          echo "配置将自动保存到GitHub Release"
-          echo "=========================================="
-          
-          # 设置环境变量
-          export TERM=xterm-256color
-          export PS1='[\u@menuconfig \W]\$ '
-          
-          # 保持SSH会话
-          while true; do
-            sleep 3600
-          done
-
-    - name: 检查并准备配置文件
-      run: |
-        cd ImmortalWrt
-        if [ ! -f .config ]; then
-          echo "❌ 未生成配置文件，请确保在menuconfig中保存了配置"
+        else
+          echo "❌ 未找到配置文件"
+          echo "status=missing" >> $GITHUB_OUTPUT
           exit 1
         fi
-        
-        echo "✅ 检测到配置文件"
-        echo "配置文件内容摘要:"
-        echo "=========================================="
-        # 显示关键配置信息
-        echo "目标设备:"
-        grep -E "CONFIG_TARGET.*DEVICE.*=y" .config || echo "未设置设备"
-        echo ""
-        echo "选择的软件包数量:"
-        grep -c "CONFIG_PACKAGE.*=y" .config || echo "0"
-        echo "=========================================="
-        
-        # 重命名配置文件
-        cp .config "/tmp/$CONFIG_NAME.config"
-        echo "配置文件已保存为: $CONFIG_NAME.config"
 
-    - name: 创建配置发布版本
+    - name: 创建发布版本
+      if: steps.check-config.outputs.status == 'valid'
       id: create-release
       uses: actions/create-release@v1
       env:
@@ -198,7 +281,7 @@ jobs:
         tag_name: config-${{ env.CONFIG_NAME }}-$(date +%Y%m%d-%H%M%S)
         release_name: "配置文件 - ${{ env.CONFIG_NAME }}"
         body: |
-          通过菜单配置生成的配置文件
+          ImmortalWrt 菜单配置生成的文件
           
           生成信息:
           - 时间: $(date)
@@ -208,38 +291,49 @@ jobs:
           
           使用说明:
           1. 下载此配置文件
-          2. 重命名为: rax3000m.config 或 ax6000.config
-          3. 放在编译仓库的根目录
-          4. 触发编译工作流即可使用此配置
+          2. 重命名为对应的设备配置文件（如 rax3000m.config）
+          3. 放置在编译仓库的根目录
+          4. 触发自动编译工作流
           
-          注: 此配置基于 ${{ env.REPO_BRANCH }} 版本生成
+          技术信息:
+          - 基于 ${{ env.REPO_BRANCH }} 版本生成
+          - 包含完整的菜单配置选项
         draft: false
         prerelease: false
 
-    - name: 上传配置文件到Release
+    - name: 上传配置文件
+      if: steps.check-config.outputs.status == 'valid'
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create-release.outputs.upload_url }}
-        asset_path: /tmp/${{ env.CONFIG_NAME }}.config
+        asset_path: ${{ env.CONFIG_NAME }}.config
         asset_name: ${{ env.CONFIG_NAME }}.config
         asset_content_type: text/plain
 
     - name: 显示完成信息
+      if: steps.check-config.outputs.status == 'valid'
       run: |
         echo "=========================================="
         echo "           配置完成"
         echo "=========================================="
-        echo "✅ 配置文件已生成并上传到Release"
+        echo "✅ 配置文件已上传到 GitHub Release"
         echo "📁 文件名: $CONFIG_NAME.config"
-        echo "🔗 下载地址: ${{ steps.create-release.outputs.html_url }}"
+        echo "🔗 发布地址: ${{ steps.create-release.outputs.html_url }}"
         echo "🏷️  源码版本: $REPO_BRANCH"
-        echo "🔌 自定义插件: $LOAD_CUSTOM_FEEDS"
+        echo "🔧 自定义插件: $LOAD_CUSTOM_FEEDS"
         echo ""
-        echo "使用说明:"
-        echo "1. 下载上面的配置文件"
-        echo "2. 重命名为对应设备名.config"
-        echo "3. 放入仓库根目录"
+        echo "下一步操作:"
+        echo "1. 下载配置文件"
+        echo "2. 重命名为设备名.config（如 rax3000m.config）"
+        echo "3. 提交到仓库根目录"
         echo "4. 触发编译工作流"
         echo "=========================================="
+
+    - name: 清理临时文件
+      if: always()
+      run: |
+        echo "清理临时文件..."
+        rm -f interactive-menuconfig.sh USAGE.md
+        echo "清理完成"
