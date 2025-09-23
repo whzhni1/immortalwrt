@@ -25,7 +25,7 @@ on:
         type: string
 
 env:
-  REPO_URL: https://github.com/immortalwrt/immortalwrt/tree/
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
   TZ: Asia/Shanghai
 
 # 添加权限声明
@@ -48,20 +48,20 @@ jobs:
         if [ -z "$REPO_VERSION" ]; then
           REPO_VERSION="v24.10"
         fi
-        REPO_BRANCH="$REPO_VERSION"
+        REPO_TAG="$REPO_VERSION"
         
         CONFIG_NAME="${{ github.event.inputs.CONFIG_NAME }}"
         LOAD_CUSTOM_FEEDS="${{ github.event.inputs.LOAD_CUSTOM_FEEDS }}"
         DEVICE_PROFILE="${{ github.event.inputs.DEVICE_PROFILE }}"
         
-        echo "REPO_BRANCH=$REPO_BRANCH" >> $GITHUB_ENV
+        echo "REPO_TAG=$REPO_TAG" >> $GITHUB_ENV
         echo "CONFIG_NAME=$CONFIG_NAME" >> $GITHUB_ENV
         echo "LOAD_CUSTOM_FEEDS=$LOAD_CUSTOM_FEEDS" >> $GITHUB_ENV
         echo "DEVICE_PROFILE=$DEVICE_PROFILE" >> $GITHUB_ENV
         echo "RELEASE_TIME=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
         echo "RELEASE_TAG=config-${CONFIG_NAME}-$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
         
-        echo "使用版本: $REPO_BRANCH"
+        echo "使用版本标签: $REPO_TAG"
         echo "配置文件名: $CONFIG_NAME.config"
         echo "加载自定义插件库: $LOAD_CUSTOM_FEEDS"
         echo "设备型号: $DEVICE_PROFILE"
@@ -80,18 +80,42 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: 下载源码
+    - name: 下载源码 (使用 Tag)
       working-directory: /workdir
       run: |
         echo "正在克隆 ImmortalWrt 源码..."
-        echo "版本/标签: $REPO_BRANCH"
+        echo "版本标签: $REPO_TAG"
+        echo "目标地址: $REPO_URL/tree/$REPO_TAG"
         
-        if git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt; then
-          echo "✅ 源码克隆成功: 使用 $REPO_BRANCH"
-        else
-          echo "❌ 标签/分支 '$REPO_BRANCH' 不存在，终止脚本"
-          exit 1
-        fi
+        # 先克隆仓库（浅克隆）
+        git clone --depth 1 --branch "$REPO_TAG" "$REPO_URL" ImmortalWrt 2>/dev/null || {
+          echo "❌ 无法直接克隆标签 $REPO_TAG，尝试完整克隆..."
+          git clone "$REPO_URL" ImmortalWrt
+          cd ImmortalWrt
+          
+          # 列出所有可用的 tags
+          echo "可用的版本标签："
+          git tag -l "v*" | tail -20
+          
+          # 尝试切换到指定的 tag
+          if git checkout "tags/$REPO_TAG" 2>/dev/null; then
+            echo "✅ 成功切换到标签: $REPO_TAG"
+          else
+            echo "❌ 标签 $REPO_TAG 不存在"
+            echo "使用最新的标签..."
+            LATEST_TAG=$(git describe --tags --abbrev=0)
+            git checkout "tags/$LATEST_TAG"
+            echo "使用标签: $LATEST_TAG"
+            echo "REPO_TAG=$LATEST_TAG" >> $GITHUB_ENV
+          fi
+          cd ..
+        }
+        
+        # 验证版本
+        cd ImmortalWrt
+        echo "当前版本信息："
+        git describe --tags --always
+        cd ..
         
         ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
         echo "源码准备完成"
@@ -140,58 +164,98 @@ jobs:
           make defconfig
         fi
 
-    - name: 检查并准备配置文件
+    - name: 准备上传文件
+      id: prepare
       run: |
         cd ImmortalWrt
         if [ ! -f .config ]; then
           echo "❌ 未生成配置文件"
           exit 1
         fi
+        
+        # 创建上传目录
         mkdir -p $GITHUB_WORKSPACE/upload
+        
+        # 复制配置文件
         cp .config "$GITHUB_WORKSPACE/upload/$CONFIG_NAME.config"
-        echo "✅ 配置文件已保存为: $CONFIG_NAME.config"
+        
+        # 验证文件
+        echo "验证上传文件："
+        ls -la "$GITHUB_WORKSPACE/upload/"
+        
+        # 设置输出变量
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "✅ 配置文件已准备: $CONFIG_NAME.config"
 
     - name: 生成发布说明
       run: |
-        cat > release.md << END
-        ## 配置文件信息
+        cat > $GITHUB_WORKSPACE/release.md << END
+        ## 📋 配置文件信息
         
-        - **生成时间**: $RELEASE_TIME
-        - **源码版本**: $REPO_BRANCH
-        - **自定义插件库**: $LOAD_CUSTOM_FEEDS
-        - **配置文件**: $CONFIG_NAME.config
-        - **设备型号**: ${DEVICE_PROFILE:-未指定}
+        | 项目 | 内容 |
+        |------|------|
+        | **生成时间** | $RELEASE_TIME |
+        | **源码版本** | $REPO_TAG |
+        | **自定义插件库** | $LOAD_CUSTOM_FEEDS |
+        | **配置文件** | $CONFIG_NAME.config |
+        | **设备型号** | ${DEVICE_PROFILE:-未指定} |
         
-        ## 使用说明
+        ## 📥 下载文件
         
-        1. 下载此配置文件
-        2. 重命名为: \`rax3000m.config\` 或 \`ax6000.config\`
-        3. 放在编译仓库的根目录
-        4. 触发编译工作流即可使用此配置
+        点击下方的 **$CONFIG_NAME.config** 文件下载配置
+        
+        ## 📖 使用说明
+        
+        1. 下载配置文件 \`$CONFIG_NAME.config\`
+        2. 重命名为对应设备的配置文件名：
+           - RAX3000M: 重命名为 \`rax3000m.config\`
+           - AX6000: 重命名为 \`ax6000.config\`
+        3. 将配置文件放在编译仓库的根目录
+        4. 触发编译工作流使用此配置
+        
+        ## 🔗 源码地址
+        
+        本配置基于: [$REPO_URL/tree/$REPO_TAG]($REPO_URL/tree/$REPO_TAG)
         
         ---
-        *此配置基于 ImmortalWrt $REPO_BRANCH 版本生成*
+        *自动生成于 GitHub Actions*
         END
+        
+        echo "发布说明已生成"
+        cat $GITHUB_WORKSPACE/release.md
 
-    - name: 创建 Release
+    - name: 上传配置文件到 Artifacts (备份)
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.CONFIG_NAME }}-config
+        path: upload/*.config
+
+    - name: 创建 Release 并上传文件
       uses: ncipollo/release-action@v1
       with:
         tag: ${{ env.RELEASE_TAG }}
-        name: "配置文件 - ${{ env.CONFIG_NAME }}"
-        bodyFile: release.md
-        artifacts: "${{ github.workspace }}/upload/*"
+        name: "配置文件 - ${{ env.CONFIG_NAME }} [${{ env.REPO_TAG }}]"
+        bodyFile: "${{ github.workspace }}/release.md"
+        artifacts: "${{ github.workspace }}/upload/*.config"
         allowUpdates: true
+        removeArtifacts: false
+        replacesArtifacts: false
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: 显示完成信息
       run: |
         echo "=========================================="
-        echo "           配置完成"
+        echo "           ✅ 配置生成完成"
         echo "=========================================="
-        echo "✅ 配置文件已生成并上传到Release"
-        echo "📁 文件名: $CONFIG_NAME.config"
-        echo "🏷️ 标签: $RELEASE_TAG"
-        echo "🏷️ 源码版本: $REPO_BRANCH"
+        echo "📁 配置文件: $CONFIG_NAME.config"
+        echo "🏷️ 发布标签: $RELEASE_TAG"
+        echo "📌 源码版本: $REPO_TAG"
         echo "🔌 自定义插件: $LOAD_CUSTOM_FEEDS"
         echo "📦 设备型号: ${DEVICE_PROFILE:-未指定}"
+        echo ""
+        echo "📥 文件已上传到:"
+        echo "   1. Release 页面 (永久保存)"
+        echo "   2. Artifacts (临时备份)"
         echo "=========================================="
+        echo ""
+        echo "🔗 查看 Release: https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG"
