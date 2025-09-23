@@ -31,11 +31,6 @@ on:
         description: '设置LAN IP地址'
         required: true
         default: '192.168.1.1'
-      SSH_CONNECTION:
-        description: 'SSH连接到Actions'
-        required: false
-        default: false
-        type: boolean
       UPLOAD_BIN_DIR:
         description: '上传bin目录'
         required: false
@@ -51,8 +46,7 @@ on:
         required: false
         default: true
         type: boolean
-  schedule:
-    - cron: 0 16 * * 5
+  
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -261,21 +255,7 @@ jobs:
         # 检查设备配置文件
         if [ ! -f "${{ env.CONFIG_FILE }}" ]; then
           echo "错误: 未找到配置文件 ${{ env.CONFIG_FILE }}"
-          echo "创建示例配置文件..."
-          
-          if [ "${{ env.DEVICE_MODEL }}" = "rax3000m" ]; then
-            cat > ${{ env.CONFIG_FILE }} <<'EOF'
-        CONFIG_TARGET_mediatek=y
-        CONFIG_TARGET_mediatek_filogic=y
-        CONFIG_TARGET_mediatek_filogic_DEVICE_cmcc_rax3000m=y
-        EOF
-          elif [ "${{ env.DEVICE_MODEL }}" = "ax6000" ]; then
-            cat > ${{ env.CONFIG_FILE }} <<'EOF'
-        CONFIG_TARGET_mediatek=y
-        CONFIG_TARGET_mediatek_filogic=y
-        CONFIG_TARGET_mediatek_filogic_DEVICE_jdcloud_re-cp-03=y
-        EOF
-          fi
+          exit 1
         fi
         
         # 复制配置文件
@@ -316,13 +296,6 @@ jobs:
             echo "IP_ADDR=192.168.1.1" >> $GITHUB_ENV
             echo "IP地址格式无效，使用默认: 192.168.1.1"
         fi
-
-    - name: SSH连接到Actions
-      uses: P3TERX/ssh2actions@v1.0.0
-      if: github.event.inputs.SSH_CONNECTION == 'true'
-      env:
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
     - name: 下载软件包
       id: package
