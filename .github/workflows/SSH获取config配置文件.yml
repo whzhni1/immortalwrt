@@ -272,34 +272,35 @@ EOF
         fi
 
     - name: 创建发布版本
-      if: steps.check-config.outputs.status == 'valid'
-      id: create-release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: config-${{ env.CONFIG_NAME }}-$(date +%Y%m%d-%H%M%S)
-        release_name: "配置文件 - ${{ env.CONFIG_NAME }}"
-        body: |
-          ImmortalWrt 菜单配置生成的文件
-          
-          生成信息:
-          - 时间: $(date)
-          - 源码版本: ${{ env.REPO_BRANCH }}
-          - 自定义插件库: ${{ env.LOAD_CUSTOM_FEEDS }}
-          - 配置文件: ${{ env.CONFIG_NAME }}.config
-          
-          使用说明:
-          1. 下载此配置文件
-          2. 重命名为对应的设备配置文件（如 rax3000m.config）
-          3. 放置在编译仓库的根目录
-          4. 触发自动编译工作流
-          
-          技术信息:
-          - 基于 ${{ env.REPO_BRANCH }} 版本生成
-          - 包含完整的菜单配置选项
-        draft: false
-        prerelease: false
+  if: steps.check-config.outputs.status == 'valid'
+  id: create-release
+  uses: actions/create-release@v1
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  with:
+    tag_name: config-${{ env.CONFIG_NAME }}-${{ env.BUILD_DATE }}
+    release_name: "配置文件 - ${{ env.CONFIG_NAME }}"
+    body: |
+      ImmortalWrt 菜单配置生成的文件
+      
+      生成信息:
+      - 时间: ${{ env.BUILD_DATE }}
+      - 源码版本: ${{ env.REPO_BRANCH }}
+      - 自定义插件库: ${{ env.LOAD_CUSTOM_FEEDS }}
+      - 配置文件: ${{ env.CONFIG_NAME }}.config
+      
+      使用说明:
+      1. 下载此配置文件
+      2. 重命名为对应的设备配置文件（如 rax3000m.config）
+      3. 放置在编译仓库的根目录
+      4. 触发自动编译工作流
+      
+      技术信息:
+      - 基于 ${{ env.REPO_BRANCH }} 版本生成
+      - 包含完整的菜单配置选项
+    draft: false
+    prerelease: false
+
 
     - name: 上传配置文件
       if: steps.check-config.outputs.status == 'valid'
