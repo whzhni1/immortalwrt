@@ -86,7 +86,7 @@ jobs:
         echo "环境准备完成"
 
     - name: 等待手动配置（SSH / Web）
-      uses: mxschmitt/action-tmate@v3
+      uses: mxschmitt/action-tmate@v2
       with:
         limit-access-to-actor: true
         github-token: ${{ secrets.GITHUB_TOKEN }}
