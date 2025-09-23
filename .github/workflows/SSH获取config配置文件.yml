@@ -85,10 +85,15 @@ jobs:
         rm -f .config .config.old
         echo "环境准备完成"
 
-    - name: Web SSH 连接
-      uses: luchina-gabriel/oss-ssh-action@v1.0.0
+    - name: SSH连接配置
+      uses: DamianReeves/write-file-action@v1.0
       with:
-        password: ${{ github.run_id }}
+        # 这个Action更稳定
+        path: /tmp/wait-for-ssh
+        contents: |
+          # 等待用户手动配置
+          echo "请运行: make menuconfig"
+          sleep 3600
 
     - name: 检查并保存配置
       run: |
