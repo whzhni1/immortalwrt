@@ -6,7 +6,7 @@ on:
       REPO_VERSION:
         description: '输入 ImmortalWrt 版本（如 v24.10.2）'
         required: false
-        default: 'v24.10'
+        default: 'v24.10.2'
         type: string
       CONFIG_NAME:
         description: '配置文件名（不含.config后缀）'
@@ -19,7 +19,7 @@ on:
         default: false
         type: boolean
       DEVICE_PROFILE:
-        description: '设备型号（如 rax3000m / ax6000），留空则进入 menuconfig 手动选择'
+        description: '设备型号（如：cmcc_rax3000m ），留空则进入 menuconfig 手动选择'
         required: false
         default: ''
         type: string
