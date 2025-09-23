@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       REPO_VERSION:
-        description: '选择 ImmortalWrt 版本'
+        description: '输入 ImmortalWrt 版本（如V24.10.2）'
         required: false
-        default: 'immortalwrt-24.10'
+        default: 'V24.10'
         type: string
       CONFIG_NAME:
         description: '设置配置文件名（不含.config后缀）'
