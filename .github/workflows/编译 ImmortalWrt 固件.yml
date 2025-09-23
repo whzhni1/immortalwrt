@@ -168,7 +168,6 @@ jobs:
         else
           echo "❌ '$REPO_BRANCH' 克隆失败"
           exit 1
-          fi
         fi
         
         ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
