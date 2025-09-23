@@ -1,4 +1,4 @@
-name: 纯菜单配置模式（使用tmate）
+name: 纯菜单配置模式（使用tmate v3）
 
 on:
   workflow_dispatch:
@@ -27,10 +27,10 @@ jobs:
   pure-menuconfig:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    
     steps:
     - name: 检查项目分支
       uses: actions/checkout@main
-          
 
     - name: 设置变量
       run: |
@@ -85,14 +85,13 @@ jobs:
         rm -f .config .config.old
         echo "环境准备完成"
 
-    - name: 等待手动配置（SSH）
+    - name: 等待手动配置（SSH / Web）
       uses: mxschmitt/action-tmate@v3
       with:
         limit-access-to-actor: true
         github-token: ${{ secrets.GITHUB_TOKEN }}
       env:
         TMATE_PRINT_CONNECTION: true
-
 
     - name: 检查并保存配置
       run: |
@@ -114,9 +113,12 @@ jobs:
       uses: softprops/action-gh-release@v1
       if: success()
       with:
-        tag_name: config-${{ env.CONFIG_NAME }}-$(date +%s)
+        tag_name: config-${{ env.CONFIG_NAME }}-${{ github.run_id }}
         name: "配置-${{ env.CONFIG_NAME }}"
-        body: "生成时间: $(date)"
+        body: |
+          生成时间: ${{ github.run_id }}
+          源码版本: ${{ env.REPO_BRANCH }}
+          自定义插件库: ${{ env.LOAD_CUSTOM_FEEDS }}
         files: /tmp/${{ env.CONFIG_NAME }}.config
 
     - name: 完成提示
