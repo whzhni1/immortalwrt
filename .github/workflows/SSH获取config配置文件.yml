@@ -1,4 +1,4 @@
-name: 纯菜单配置模式（使用tmate）
+name: 纯菜单配置模式
 
 on:
   workflow_dispatch:
@@ -41,13 +41,8 @@ jobs:
         echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
         echo "CONFIG_NAME=$CONFIG_NAME" >> $GITHUB_ENV
         echo "LOAD_CUSTOM_FEEDS=$LOAD_CUSTOM_FEEDS" >> $GITHUB_ENV
-        
-        echo "使用版本: $REPO_VERSION"
-        echo "配置文件名: $CONFIG_NAME.config"
 
     - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential libncurses5-dev git
@@ -57,65 +52,49 @@ jobs:
     - name: 下载源码
       working-directory: /workdir
       run: |
-        echo "正在克隆 ImmortalWrt 源码..."
         git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt || {
-          echo "使用默认分支"
           git clone --depth 1 "$REPO_URL" ImmortalWrt
         }
         ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
 
-    - name: 加载自定义插件库（如果启用）
+    - name: 加载自定义插件库
       if: env.LOAD_CUSTOM_FEEDS == 'true'
       run: |
         cd ImmortalWrt
-        if [ -f "$GITHUB_WORKSPACE/part1.sh" ]; then
+        [ -f "$GITHUB_WORKSPACE/part1.sh" ] && {
           chmod +x "$GITHUB_WORKSPACE/part1.sh"
           "$GITHUB_WORKSPACE/part1.sh"
-        fi
+        }
 
-    - name: 更新并安装feeds
+    - name: 更新feeds
       run: |
         cd ImmortalWrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+        rm -f .config
 
-    - name: 初始化配置环境
-      run: |
-        cd ImmortalWrt
-        rm -f .config .config.old
-        echo "环境准备完成"
-
-    - name: 等待手动配置（SSH）
-      uses: mxschmitt/action-tmate@v3
+    - name: 等待SSH配置
+      uses: luchina-gabriel/oss-ssh-action@v1.0.0
       with:
-        limit-access-to-actor: true
-        timeout: 60
+        password: ${{ github.run_id }}
+        timezone: Asia/Shanghai
 
-    - name: 检查并保存配置
+    - name: 保存配置
       run: |
         cd ImmortalWrt
         if [ -f .config ]; then
-          echo "✅ 找到配置文件"
           cp .config "/tmp/$CONFIG_NAME.config"
-          
-          # 显示配置摘要
-          echo "配置摘要:"
-          grep -E "CONFIG_TARGET.*=y" .config || echo "无目标配置"
-          echo "包数量: $(grep -c "CONFIG_PACKAGE.*=y" .config || echo "0")"
+          echo "✅ 配置已保存"
         else
           echo "❌ 未找到配置文件"
           exit 1
         fi
 
-    - name: 上传配置到Release
+    - name: 发布配置
       uses: softprops/action-gh-release@v1
-      if: success()
       with:
-        tag_name: config-${{ env.CONFIG_NAME }}-$(date +%s)
-        name: "配置-${{ env.CONFIG_NAME }}"
-        body: "生成时间: $(date)"
+        tag_name: config-${{ env.CONFIG_NAME }}
         files: /tmp/${{ env.CONFIG_NAME }}.config
 
     - name: 完成提示
-      run: |
-        echo "✅ 配置完成！文件: $CONFIG_NAME.config"
+      run: echo "✅ 配置完成: $CONFIG_NAME.config"
