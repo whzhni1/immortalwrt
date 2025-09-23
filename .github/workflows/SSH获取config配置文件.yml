@@ -89,6 +89,7 @@ jobs:
       uses: mxschmitt/action-tmate@v3
       with:
         limit-access-to-actor: true
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         timeout: 60
 
     - name: 检查并保存配置
