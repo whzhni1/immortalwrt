@@ -85,12 +85,10 @@ jobs:
         rm -f .config .config.old
         echo "环境准备完成"
 
-    - name: 等待手动配置（SSH）
-      uses: mxschmitt/action-tmate@v3
+    - name: Web SSH 连接
+      uses: luchina-gabriel/oss-ssh-action@v1.0.0
       with:
-        limit-access-to-actor: true
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        timeout: 60
+        password: ${{ github.run_id }}
 
     - name: 检查并保存配置
       run: |
