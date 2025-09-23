@@ -1,4 +1,4 @@
-name: 纯菜单配置模式
+name: SSH获取config配置
 
 on:
   workflow_dispatch:
