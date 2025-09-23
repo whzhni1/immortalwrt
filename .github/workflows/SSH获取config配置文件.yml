@@ -225,7 +225,7 @@ jobs:
         cat $GITHUB_WORKSPACE/release.md
 
     - name: 上传配置文件到 Artifacts (备份)
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ env.CONFIG_NAME }}-config
         path: upload/*.config
