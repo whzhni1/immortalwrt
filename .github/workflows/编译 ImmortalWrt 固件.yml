@@ -76,8 +76,8 @@ jobs:
           # 直接使用输入的分支名
           echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
         else
-          echo "使用默认版本: immortalwrt-24.10"
-          echo "REPO_BRANCH=immortalwrt-24.10" >> $GITHUB_ENV
+          echo "版本出错，退出工作流"
+          exit 1
         fi
         
         # 测试拼接的源码地址
@@ -86,16 +86,6 @@ jobs:
         echo "目标分支: $REPO_BRANCH"
         echo "完整地址: $REPO_URL/tree/$REPO_BRANCH"
         echo "======================================"
-        
-        # 验证分支是否存在（可选）
-        echo "正在验证分支是否存在..."
-        if curl -s -I "$REPO_URL/tree/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
-          echo "✅ 版本验证成功: $REPO_BRANCH 存在"
-        elif curl -s -I "$REPO_URL/releases/tag/$REPO_BRANCH" | head -n 1 | grep -q "200"; then
-          echo "✅ 标签验证成功: $REPO_BRANCH 存在"
-        else
-          echo "⚠️  版本验证: 无法直接验证 $REPO_BRANCH，将继续尝试克隆"
-        fi
         
     - name: 设置设备变量
       run: |
@@ -176,26 +166,8 @@ jobs:
           echo "✅ 源码克隆成功!"
           CLONE_STATUS="success"
         else
-          echo "❌ 指定的版本 '$REPO_BRANCH' 克隆失败，尝试使用默认分支..."
-          if git clone --depth 1 "$REPO_URL" ImmortalWrt; then
-            cd ImmortalWrt
-            # 检查是否存在该分支或标签
-            if git show-ref --verify --quiet "refs/remotes/origin/$REPO_BRANCH" || git show-ref --verify --quiet "refs/tags/$REPO_BRANCH"; then
-              echo "切换到版本 $REPO_BRANCH"
-              git checkout "$REPO_BRANCH"
-              CLONE_STATUS="success"
-            else
-              echo "❌ 版本 $REPO_BRANCH 不存在，使用默认分支"
-              DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
-              echo "使用默认分支: $DEFAULT_BRANCH"
-              git checkout "$DEFAULT_BRANCH"
-              CLONE_STATUS="fallback"
-            fi
-            cd ..
-          else
-            echo "❌ 源码克隆完全失败!"
-            CLONE_STATUS="failed"
-            exit 1
+          echo "❌ '$REPO_BRANCH' 克隆失败"
+          exit 1
           fi
         fi
         
