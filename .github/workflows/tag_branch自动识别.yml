@@ -396,36 +396,7 @@ jobs:
         - **源码仓库**: ${{ env.REPO_URL }}
         - **源码版本**: ${{ env.REPO_VERSION }}
         
-
-        ## 📝 刷机说明
-        
-        ### 原厂固件刷入
-        1. 下载对应的 \`factory.bin\` 文件
-        2. 进入原厂固件管理界面
-        3. 选择固件升级，上传文件
-        4. 等待刷机完成，自动重启
-        
-        ### ImmortalWrt 升级
-        1. 下载对应的 \`sysupgrade.bin\` 文件
-        2. 进入 系统 → 备份/升级
-        3. 上传固件文件
-        4. 取消勾选"保留配置"（如需全新安装）
-        5. 点击"刷写固件"
-        
-        ## ⚠️ 注意事项
-        
-        - 刷机有风险，请确保设备型号正确
-        - 建议先备份原厂固件和重要配置
-        - 刷机过程中请勿断电
-        - 如遇问题可尝试恢复模式重刷
-        
-        ## 🔗 相关链接
-        
-        - [ImmortalWrt 官网](https://immortalwrt.org)
-        - [问题反馈](https://github.com/${{ github.repository }}/issues)
-        
         ---
-        *此固件由 GitHub Actions 自动编译*
         EOF
 
     - name: 发布固件到Release
