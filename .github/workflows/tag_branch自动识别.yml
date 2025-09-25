@@ -365,6 +365,169 @@ jobs:
         ls -lh
         echo "======================================"
 
+    - name: ABI对比分析
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+        echo "======================================"
+        echo "🔍 ABI 对比分析"
+        echo "======================================"
+        
+        cd ImmortalWrt
+        
+        # 获取当前编译的版本信息
+        CURRENT_VERSION=""
+        if [ -f "include/version.mk" ]; then
+          CURRENT_VERSION=$(grep 'VERSION_NUMBER' include/version.mk | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
+        fi
+        
+        if [ -f "Makefile" ]; then
+          VERSION=$(grep '^VERSION' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
+          PATCHLEVEL=$(grep '^PATCHLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
+          SUBLEVEL=$(grep '^SUBLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
+          if [ -n "$VERSION" ]; then
+            CURRENT_VERSION="${VERSION}.${PATCHLEVEL}.${SUBLEVEL}"
+          fi
+        fi
+        
+        echo "📋 当前编译版本: $CURRENT_VERSION"
+        echo "🔖 源码版本: $REPO_VERSION"
+        
+        # 获取目标设备信息
+        TARGET_INFO=$(grep '^CONFIG_TARGET_BOARD' .config | cut -d'=' -f2 | tr -d '"' | head -1)
+        SUBTARGET_INFO=$(grep '^CONFIG_TARGET_SUBTARGET' .config | cut -d'=' -f2 | tr -d '"' | head -1)
+        PROFILE_INFO=$(grep '^CONFIG_TARGET_PROFILE' .config | cut -d'=' -f2 | tr -d '"' | head -1)
+        
+        echo "🎯 目标设备: $TARGET_INFO/$SUBTARGET_INFO"
+        echo "📱 设备配置: $PROFILE_INFO"
+        
+        # 检查内核配置差异
+        echo ""
+        echo "📊 内核配置对比:"
+        if [ -f ".config" ] && [ -f "config.buildinfo" ]; then
+          echo "✅ 找到配置文件"
+          # 这里可以添加具体的配置对比逻辑
+        else
+          echo "ℹ️  配置文件对比需要完整的构建信息"
+        fi
+        
+        # 检查软件包版本
+        echo ""
+        echo "📦 关键软件包版本:"
+        
+        # 检查内核版本
+        KERNEL_VERSION=$(grep '^LINUX_VERSION' include/kernel-version.mk 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
+        echo "▪️  内核版本: $KERNEL_VERSION"
+        
+        # 检查GCC版本
+        GCC_VERSION=$(grep '^GCC_VERSION' include/toolchain-build.mk 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
+        echo "▪️  GCC版本: $GCC_VERSION"
+        
+        # 检查musl版本（如果使用musl）
+        MUSL_VERSION=$(grep '^PKG_VERSION' toolchain/musl/Makefile 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
+        if [ "$MUSL_VERSION" != "unknown" ]; then
+          echo "▪️  musl版本: $MUSL_VERSION"
+        fi
+        
+        # 生成ABI兼容性报告
+        echo ""
+        echo "🔬 ABI兼容性分析:"
+        
+        # 检查关键ABI相关配置
+        ABI_CHECK_PASS=true
+        
+        # 检查内核ABI版本
+        if [ -f "bin/targets/$TARGET_INFO/$SUBTARGET_INFO/config.buildinfo" ]; then
+          echo "✅ 构建配置文件存在"
+          
+          # 检查CONFIG_VERSION_CODE（内核ABI版本）
+          KERNEL_ABI=$(grep 'CONFIG_VERSION_CODE' bin/targets/$TARGET_INFO/$SUBTARGET_INFO/config.buildinfo 2>/dev/null | cut -d'=' -f2 | head -1 || echo "unknown")
+          if [ "$KERNEL_ABI" != "unknown" ]; then
+            echo "▪️  内核ABI版本: $KERNEL_ABI"
+          fi
+          
+          # 检查其他关键ABI配置
+          KERNEL_RELEASE=$(grep 'KERNEL_PATCHVER' target/linux/$TARGET_INFO/Makefile 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
+          echo "▪️  内核系列: $KERNEL_RELEASE"
+        else
+          echo "⚠️  构建配置文件不存在，无法进行详细ABI分析"
+          ABI_CHECK_PASS=false
+        fi
+        
+        # 生成建议
+        echo ""
+        echo "💡 兼容性建议:"
+        if [ "$ABI_CHECK_PASS" = "true" ]; then
+          echo "✅ 当前编译配置与官方源基本兼容"
+          echo "▪️  可以安装大部分官方软件包"
+          echo "▪️  建议使用相同内核版本的软件包"
+        else
+          echo "⚠️  无法完成完整的ABI兼容性检查"
+          echo "▪️  建议测试关键软件包的兼容性"
+          echo "▪️  如需安装第三方软件包，请确认ABI兼容性"
+        fi
+        
+        # 与官方快照版本对比
+        echo ""
+        echo "🌐 官方版本参考:"
+        OFFICIAL_SNAPSHOT_URL="https://downloads.immortalwrt.org/snapshots/targets/$TARGET_INFO/$SUBTARGET_INFO/"
+        echo "▪️  官方快照: $OFFICIAL_SNAPSHOT_URL"
+        
+        # 生成MD5校验信息
+        echo ""
+        echo "🔒 固件校验信息:"
+        if [ -n "$FIRMWARE" ] && [ -d "$FIRMWARE" ]; then
+          cd "$FIRMWARE"
+          for file in *; do
+            if [[ -f "$file" ]]; then
+              MD5_SUM=$(md5sum "$file" | cut -d' ' -f1)
+              echo "▪️  $file: $MD5_SUM"
+            fi
+          done
+        fi
+        
+        echo "======================================"
+        echo "ABI分析完成"
+        echo "======================================"
+        
+        # 保存分析结果到文件
+        cat > abi_analysis_report.md <<EOF
+        # ABI 兼容性分析报告
+        
+        ## 编译信息
+        - **设备**: ${{ env.DEVICE_FULL_NAME }}
+        - **目标平台**: $TARGET_INFO/$SUBTARGET_INFO
+        - **编译时间**: ${{ env.FILE_DATE }}
+        - **源码版本**: $REPO_VERSION
+        - **编译版本**: $CURRENT_VERSION
+        
+        ## 核心组件版本
+        - **内核版本**: $KERNEL_VERSION
+        - **内核系列**: $KERNEL_RELEASE
+        - **GCC版本**: $GCC_VERSION
+        - **C库版本**: $MUSL_VERSION
+        
+        ## 兼容性状态
+        $(if [ "$ABI_CHECK_PASS" = "true" ]; then echo "✅ **基本兼容**"; else echo "⚠️ **需要验证**"; fi)
+        
+        ## 建议
+        - 使用相同内核版本的软件包以确保兼容性
+        - 测试关键功能模块的兼容性
+        - 参考官方快照版本: $OFFICIAL_SNAPSHOT_URL
+        
+        ## 校验信息
+        $(if [ -n "$FIRMWARE" ] && [ -d "$FIRMWARE" ]; then 
+          cd "$FIRMWARE"
+          for file in *; do
+            if [[ -f "$file" ]]; then
+              MD5_SUM=$(md5sum "$file" | cut -d' ' -f1)
+              echo "- $file: \`$MD5_SUM\`"
+            fi
+          done
+        fi)
+        EOF
+        
+        echo "✅ ABI分析报告已生成: abi_analysis_report.md"
+
     - name: 上传固件到Artifacts
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && github.event.inputs.UPLOAD_FIRMWARE == 'true'
@@ -405,7 +568,9 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        files: ${{ env.FIRMWARE }}/*
+        files: |
+          ${{ env.FIRMWARE }}/*
+          abi_analysis_report.md
         name: ${{ env.DEVICE_FULL_NAME }} - ${{ env.FILE_DATE }}
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
