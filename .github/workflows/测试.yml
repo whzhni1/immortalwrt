@@ -1,0 +1,144 @@
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-ImmortalWrt
+# Description: Build ImmortalWrt for Multiple Devices
+#
+
+name: 测试
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      REPO_VERSION:
+        description: '选择 ImmortalWrt 版本 (格式: v24.10.2 或分支名)'
+        required: true
+        default: 'v24.10.2'
+        type: string
+      DEVICE_MODEL:
+        description: '选择配置文件'
+        required: true
+        default: 'rax3000m'
+        type: choice
+        options:
+          - rax3000m
+          - ax6000
+      LAN_IP:
+        description: '设置LAN IP地址'
+        required: true
+        default: '192.168.1.1'
+      RUN_PART1:
+        description: '执行 Part1 脚本'
+        required: false
+        default: true
+        type: boolean
+      RUN_PART2:
+        description: '执行 Part2 脚本'
+        required: false
+        default: true
+        type: boolean
+      UPLOAD_BIN_DIR:
+        description: '上传bin目录'
+        required: false
+        default: false
+        type: boolean
+      UPLOAD_FIRMWARE:
+        description: '上传固件到Artifacts'
+        required: false
+        default: true
+        type: boolean
+      UPLOAD_RELEASE:
+        description: '发布固件到Release'
+        required: false
+        default: true
+        type: boolean
+  
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  FEEDS_CONF: feeds.conf.default
+  DIY_P1_SH: part1.sh
+  DIY_P2_SH: part2.sh
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    permissions:
+      contents: write
+    
+    steps:
+    - name: 检查项目分支
+      uses: actions/checkout@main
+
+    - name: ABI对比分析
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+            echo "======================================"
+            echo "🔍 ABI 对比分析"
+            echo "======================================"
+            
+            cd ImmortalWrt
+            
+            # 处理版本号
+            OFFICIAL_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+            OFFICIAL_VERSION=${OFFICIAL_VERSION#v}
+            
+            # 修正目标平台路径（mediatek-filogic -> mediatek/filogic）
+            TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
+            
+            # 构建正确的官方manifest URL
+            OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/$TARGET_PATH/immortalwrt-$OFFICIAL_VERSION-${{ env.TARGET_NAME }}.manifest"
+            
+            echo "下载官方manifest: $OFFICIAL_MANIFEST_URL"
+            
+            # 获取官方ABI
+            if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+                        OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
+                        echo "官方ABI: ${OFFICIAL_ABI:-获取失败}"
+            else
+                        # 尝试备用URL格式
+                        ALT_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/$TARGET_PATH/immortalwrt-$OFFICIAL_VERSION-$(echo $TARGET_PATH | tr '/' '-').manifest"
+                        if wget -q -O official.manifest "$ALT_URL"; then
+                                    OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
+                                    echo "官方ABI: ${OFFICIAL_ABI:-获取失败}"
+                        else
+                                    OFFICIAL_ABI=""
+                                    echo "官方ABI: 获取失败"
+                        fi
+            fi
+            
+            # 获取本地ABI（扩大搜索范围）
+            LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
+            if [ -n "$LOCAL_MANIFEST" ] && [ -f "$LOCAL_MANIFEST" ]; then
+                        LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
+                        echo "本地ABI: ${LOCAL_ABI:-获取失败}"
+            else
+                        # 尝试从固件目录查找
+                        LOCAL_MANIFEST=$(find ${{ env.FIRMWARE }} -name "*.manifest" 2>/dev/null | head -1)
+                        if [ -n "$LOCAL_MANIFEST" ] && [ -f "$LOCAL_MANIFEST" ]; then
+                                    LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
+                                    echo "本地ABI: ${LOCAL_ABI:-获取失败}"
+                        else
+                                    LOCAL_ABI=""
+                                    echo "本地ABI: 获取失败"
+                        fi
+            fi
+            
+            # 对比结果
+            echo "======================================"
+            if [ -n "$OFFICIAL_ABI" ] && [ -n "$LOCAL_ABI" ]; then
+                        if [ "$OFFICIAL_ABI" = "$LOCAL_ABI" ]; then
+                                    echo "ABI对比结果: 相同 ✅"
+                        else
+                                    echo "ABI对比结果: 不同 ❌"
+                        fi
+            else
+                        echo "ABI对比结果: 无法对比（数据不完整）"
+            fi
+            echo "======================================"
