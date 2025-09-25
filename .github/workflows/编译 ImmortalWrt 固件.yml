@@ -8,7 +8,7 @@
 # Description: Build ImmortalWrt for Multiple Devices
 #
 
-name: 编译 ImmortalWrt 官方固件
+name: 编译 ImmortalWrt 官方固件–a
 
 on:
   repository_dispatch:
@@ -39,7 +39,7 @@ on:
       RUN_PART2:
         description: '执行 Part2 脚本'
         required: false
-        default: true
+        default: false
         type: boolean
       UPLOAD_BIN_DIR:
         description: '上传bin目录'
@@ -260,7 +260,7 @@ jobs:
     - name: 更新并安装feeds
       run: |
         cd ImmortalWrt
-        ./scripts/feeds update -i
+        ./scripts/feeds update -a
         ./scripts/feeds install -a
         echo "Feeds 更新安装完成"
 
