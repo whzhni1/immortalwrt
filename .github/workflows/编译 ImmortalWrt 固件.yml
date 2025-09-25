@@ -8,19 +8,19 @@
 # Description: Build ImmortalWrt for Multiple Devices
 #
 
-name: 编译 ImmortalWrt 固件
+name: 编译 ImmortalWrt 官方固件
 
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
       REPO_VERSION:
-        description: '选择 ImmortalWrt 版本 (格式: v24.10.2 或分支名)'
-        required: false
-        default: 'v24.10'
+        description: '选择 ImmortalWrt 版本 (格式: 24.10.2 或分支名)'
+        required: true
+        default: '24.10.2'
         type: string
       DEVICE_MODEL:
-        description: '选择路由器型号'
+        description: '选择配置文件'
         required: true
         default: 'rax3000m'
         type: choice
@@ -31,6 +31,16 @@ on:
         description: '设置LAN IP地址'
         required: true
         default: '192.168.1.1'
+      RUN_PART1:
+        description: '执行 Part1 脚本'
+        required: false
+        default: true
+        type: boolean
+      RUN_PART2:
+        description: '执行 Part2 脚本'
+        required: false
+        default: true
+        type: boolean
       UPLOAD_BIN_DIR:
         description: '上传bin目录'
         required: false
@@ -50,7 +60,6 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: ${{ github.event.inputs.REPO_VERSION || 'immortalwrt-24.10' }}
   FEEDS_CONF: feeds.conf.default
   DIY_P1_SH: part1.sh
   DIY_P2_SH: part2.sh
@@ -69,45 +78,51 @@ jobs:
 
     - name: 设置版本变量
       run: |
-        # 处理版本输入
-        if [ -n "${{ github.event.inputs.REPO_VERSION }}" ]; then
-          REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
-          echo "用户指定的版本: $REPO_VERSION"
-          # 直接使用输入的分支名
-          echo "REPO_BRANCH=$REPO_VERSION" >> $GITHUB_ENV
-        else
-          echo "版本出错，退出工作流"
+        # 检查版本输入
+        if [ -z "${{ github.event.inputs.REPO_VERSION }}" ]; then
+          echo "❌ 错误：未指定版本信息"
+          echo "请在工作流运行时指定 ImmortalWrt 版本（tag或branch）"
           exit 1
         fi
         
-        # 测试拼接的源码地址
+        REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        echo "REPO_VERSION=$REPO_VERSION" >> $GITHUB_ENV
+        
         echo "======================================"
+        echo "用户指定的版本: $REPO_VERSION"
         echo "源码仓库: $REPO_URL"
-        echo "目标分支: $REPO_BRANCH"
-        echo "完整地址: $REPO_URL/tree/$REPO_BRANCH"
         echo "======================================"
         
     - name: 设置设备变量
       run: |
-        # 设置设备相关变量
+        # 检查设备型号输入
         DEVICE_MODEL="${{ github.event.inputs.DEVICE_MODEL }}"
         if [ -z "$DEVICE_MODEL" ]; then
-          DEVICE_MODEL="rax3000m"
+          echo "❌ 错误：未指定设备型号"
+          echo "请在工作流运行时选择设备型号"
+          exit 1
         fi
         
         echo "DEVICE_MODEL=$DEVICE_MODEL" >> $GITHUB_ENV
         echo "CONFIG_FILE=${DEVICE_MODEL}.config" >> $GITHUB_ENV
         
         # 根据设备型号设置变量
-        if [ "$DEVICE_MODEL" = "rax3000m" ]; then
-          echo "DEVICE_NAME=cmcc_rax3000m" >> $GITHUB_ENV
-          echo "DEVICE_FULL_NAME=CMCC-RAX3000M" >> $GITHUB_ENV
-          echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
-        elif [ "$DEVICE_MODEL" = "ax6000" ]; then
-          echo "DEVICE_NAME=jdcloud_re-cp-03" >> $GITHUB_ENV
-          echo "DEVICE_FULL_NAME=JDCloud-AX6000" >> $GITHUB_ENV
-          echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
-        fi
+        case "$DEVICE_MODEL" in
+          "rax3000m")
+            echo "DEVICE_NAME=cmcc_rax3000m" >> $GITHUB_ENV
+            echo "DEVICE_FULL_NAME=CMCC-RAX3000M" >> $GITHUB_ENV
+            echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+            ;;
+          "ax6000")
+            echo "DEVICE_NAME=jdcloud_re-cp-03" >> $GITHUB_ENV
+            echo "DEVICE_FULL_NAME=JDCloud-AX6000" >> $GITHUB_ENV
+            echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+            ;;
+          *)
+            echo "❌ 错误：不支持的设备型号: $DEVICE_MODEL"
+            exit 1
+            ;;
+        esac
         
         echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
         
@@ -156,17 +171,49 @@ jobs:
         df -hT $PWD
         echo "正在克隆 ImmortalWrt 源码..."
         echo "仓库: $REPO_URL"
-        echo "分支/版本: $REPO_BRANCH"
+        echo "版本: $REPO_VERSION"
         
-        # 显示完整的克隆命令用于调试
-        echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_BRANCH ImmortalWrt"
+        # 自动识别是 tag 还是 branch
+        echo "======================================"
+        echo "检测版本类型..."
         
-        # 尝试克隆指定的分支/版本
-        if git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" ImmortalWrt; then
-          echo "✅ 源码克隆成功!"
-          CLONE_STATUS="success"
+        # 先尝试获取远程仓库的tags和branches列表
+        echo "获取远程仓库信息..."
+        
+        # 检查是否为tag
+        if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$REPO_VERSION$"; then
+          echo "✅ 检测到 Tag: $REPO_VERSION"
+          echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
+          
+          if ! git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt; then
+            echo "❌ 错误：无法克隆 tag '$REPO_VERSION'"
+            echo "请检查 tag 是否存在"
+            exit 1
+          fi
+          
+          VERSION_TYPE="Tag"
+          
+        # 检查是否为branch
+        elif git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
+          echo "✅ 检测到 Branch: $REPO_VERSION"
+          echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
+          
+          if ! git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt; then
+            echo "❌ 错误：无法克隆分支 '$REPO_VERSION'"
+            echo "请检查分支是否存在"
+            exit 1
+          fi
+          
+          VERSION_TYPE="Branch"
+          
         else
-          echo "❌ '$REPO_BRANCH' 克隆失败"
+          echo "❌ 错误：'$REPO_VERSION' 既不是有效的 tag 也不是有效的 branch"
+          echo ""
+          echo "可用的 Tags（最近10个）："
+          git ls-remote --tags "$REPO_URL" | tail -10 | awk '{print "  - " $2}' | sed 's|refs/tags/||'
+          echo ""
+          echo "可用的 Branches："
+          git ls-remote --heads "$REPO_URL" | awk '{print "  - " $2}' | sed 's|refs/heads/||'
           exit 1
         fi
         
@@ -176,35 +223,33 @@ jobs:
         # 显示详细的版本信息
         echo "======================================"
         echo "ImmortalWrt 源码信息:"
-        echo "当前版本: $(git describe --tags 2>/dev/null || git branch --show-current)"
+        echo "版本类型: $VERSION_TYPE"
+        echo "版本名称: $REPO_VERSION"
+        echo "当前HEAD: $(git rev-parse --short HEAD)"
         echo "最新提交: $(git log --oneline -1)"
-
-        # 显示是分支还是标签
-        if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
-          echo "类型: 标签 (Tag)"
-        else
-          echo "类型: 分支 (Branch)"
-        fi
         
         # 尝试获取版本信息
         if [ -f "include/version.mk" ]; then
-          VERSION_NUMBER=$(grep 'VERSION_NUMBER' include/version.mk | cut -d'=' -f2 | tr -d ' ' || echo "未知")
+          VERSION_NUMBER=$(grep 'VERSION_NUMBER' include/version.mk | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
           echo "版本号: $VERSION_NUMBER"
         fi
         
         if [ -f "Makefile" ]; then
-          VERSION=$(grep '^VERSION' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
-          PATCHLEVEL=$(grep '^PATCHLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
-          SUBLEVEL=$(grep '^SUBLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未知")
-          echo "ImmortalWrt 版本: $VERSION.$PATCHLEVEL.$SUBLEVEL"
+          VERSION=$(grep '^VERSION' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
+          PATCHLEVEL=$(grep '^PATCHLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
+          SUBLEVEL=$(grep '^SUBLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
+          if [ "$VERSION" != "未找到" ]; then
+            echo "ImmortalWrt 版本: $VERSION.$PATCHLEVEL.$SUBLEVEL"
+          fi
         fi
         
-        echo "克隆状态: $CLONE_STATUS"
+        echo "克隆状态: ✅ 成功"
         echo "======================================"
 
     - name: 加载自定义feeds和执行脚本Part1
+      if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF Immortalwrt/feeds.conf.default
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF ImmortalWrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd ImmortalWrt
         echo "======================================"
@@ -215,17 +260,18 @@ jobs:
     - name: 更新并安装feeds
       run: |
         cd ImmortalWrt
-        ./scripts/feeds update -a
+        ./scripts/feeds update -i
         ./scripts/feeds install -a
-        echo "======================================"
         echo "Feeds 更新安装完成"
-        echo "======================================"
 
     - name: 加载设备配置和执行脚本Part2
+      if: ${{ github.event.inputs.RUN_PART2 == 'true' }}
       run: |
         # 检查设备配置文件
         if [ ! -f "${{ env.CONFIG_FILE }}" ]; then
-          echo "错误: 未找到配置文件 ${{ env.CONFIG_FILE }}"
+          echo "❌ 错误：未找到配置文件 ${{ env.CONFIG_FILE }}"
+          echo "请确保项目根目录存在该配置文件"
+          ls -la *.config 2>/dev/null || echo "当前目录没有找到任何 .config 文件"
           exit 1
         fi
         
@@ -245,28 +291,33 @@ jobs:
       run: |
         cd ImmortalWrt
         SET_IP="${{ github.event.inputs.LAN_IP }}"
+        
+        # 检查IP地址输入
         if [ -z "$SET_IP" ]; then
-          SET_IP="192.168.1.1"
+          echo "❌ 错误：未指定LAN IP地址"
+          echo "请在工作流运行时设置LAN IP地址"
+          exit 1
         fi
         
         # 验证IP地址格式
-        if [[ $SET_IP =~ ^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; then
-            # 修改默认IP地址
-            sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" package/base-files/files/bin/config_generate
-            
-            # 修改LuCI相关IP
-            if [ -d "feeds/luci/modules/luci-mod-system" ]; then
-              find feeds/luci/modules/luci-mod-system -type f -name "flash.js" -exec sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" {} + 2>/dev/null || true
-            fi
-            
-            echo "IP_ADDR=$SET_IP" >> $GITHUB_ENV
-            echo "======================================"
-            echo "LAN IP 地址设置为: $SET_IP"
-            echo "======================================"
-        else
-            echo "IP_ADDR=192.168.1.1" >> $GITHUB_ENV
-            echo "IP地址格式无效，使用默认: 192.168.1.1"
+        if ! [[ $SET_IP =~ ^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; then
+            echo "❌ 错误：IP地址格式无效: $SET_IP"
+            echo "请输入有效的IPv4地址，如: 192.168.1.1"
+            exit 1
         fi
+        
+        # 修改默认IP地址
+        sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" package/base-files/files/bin/config_generate
+        
+        # 修改LuCI相关IP
+        if [ -d "feeds/luci/modules/luci-mod-system" ]; then
+          find feeds/luci/modules/luci-mod-system -type f -name "flash.js" -exec sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" {} + 2>/dev/null || true
+        fi
+        
+        echo "IP_ADDR=$SET_IP" >> $GITHUB_ENV
+        echo "======================================"
+        echo "LAN IP 地址设置为: $SET_IP"
+        echo "======================================"
 
     - name: 下载软件包
       id: package
@@ -309,7 +360,7 @@ jobs:
         cd ImmortalWrt/bin/targets/*/*
         rm -rf packages
         # 删除不需要的文件
-        find . -type f -name "*.buildinfo" -o -name "*.manifest" -o -name "*kernel.bin" -o -name "*rootfs.tar.gz" -o -name "*.dtb" | xargs rm -f
+        #find . -type f -name "*.buildinfo" -o -name "*.manifest" -o -name "*kernel.bin" -o -name "*rootfs.tar.gz" -o -name "*.dtb" | xargs rm -f
         # 重命名固件文件
         for file in *; do
           if [[ -f "$file" ]]; then
@@ -322,6 +373,72 @@ jobs:
         echo "======================================"
         echo "固件整理完成，文件列表："
         ls -lh
+        echo "======================================"
+
+    - name: 获取官方ABI
+      run: |
+        echo "======================================"
+        echo "🔍 开始获取官方 ABI"
+        echo "======================================"
+        
+        cd ImmortalWrt
+        
+        VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        TARGET_NAME="${{ env.TARGET_NAME }}"
+        TARGET_PATH=$(echo "$TARGET_NAME" | tr '-' '/')
+        
+        # 拼接 URL（通用manifest，不带设备名）
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$VERSION/targets/$TARGET_PATH/immortalwrt-$VERSION-$TARGET_NAME.manifest"
+        echo "拼接的官方地址: $OFFICIAL_MANIFEST_URL"
+        
+        # 下载 manifest
+        if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+          echo "✅ 官方 manifest 下载成功"
+          echo "------ manifest 前10行 ------"
+          head -10 official.manifest
+          echo "-----------------------------"
+          
+          # 提取 kernel 行
+          KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
+          echo "提取到的 kernel 行: $KERNEL_LINE"
+          
+          OFFICIAL_ABI=$(echo "$KERNEL_LINE" | awk '{print $3}')
+          echo "解析出的官方 ABI: $OFFICIAL_ABI"
+          echo "OFFICIAL_ABI=$OFFICIAL_ABI" >> $GITHUB_ENV
+        else
+          echo "❌ 官方 manifest 下载失败"
+          echo "OFFICIAL_ABI=获取失败" >> $GITHUB_ENV
+        fi
+        
+        # 获取本地编译的 ABI
+        LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
+        if [ -n "$LOCAL_MANIFEST" ]; then
+          LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
+          echo "本地编译 ABI: ${LOCAL_ABI:-获取失败}"
+          echo "LOCAL_ABI=$LOCAL_ABI" >> $GITHUB_ENV
+        else
+          echo "本地编译 ABI: 获取失败"
+          echo "LOCAL_ABI=获取失败" >> $GITHUB_ENV
+        fi
+        
+        # ABI 对比
+        echo "======================================"
+        if [ -n "$OFFICIAL_ABI" ] && [ "$OFFICIAL_ABI" != "获取失败" ] && [ -n "$LOCAL_ABI" ] && [ "$LOCAL_ABI" != "获取失败" ]; then
+          if [ "$OFFICIAL_ABI" = "$LOCAL_ABI" ]; then
+            echo "✅ ABI 对比结果: 完全一致"
+            echo "ABI_STATUS=✅ 一致" >> $GITHUB_ENV
+          else
+            echo "❌ ABI 对比结果: 不一致"
+            echo "官方: $OFFICIAL_ABI"
+            echo "本地: $LOCAL_ABI"
+            echo "ABI_STATUS=❌ 不一致" >> $GITHUB_ENV
+          fi
+        else
+          echo "⚠️ ABI 对比结果: 无法对比（数据不完整）"
+          echo "ABI_STATUS=⚠️ 无法对比" >> $GITHUB_ENV
+        fi
+        echo "======================================"
+        echo "任务完成"
         echo "======================================"
 
     - name: 上传固件到Artifacts
@@ -353,38 +470,15 @@ jobs:
         ## 📦 源码信息
         
         - **源码仓库**: ${{ env.REPO_URL }}
-        - **源码分支**: ${{ env.REPO_BRANCH }}
+        - **源码版本**: ${{ env.REPO_VERSION }}
         
-
-        ## 📝 刷机说明
+        ## 🔍 ABI 信息
         
-        ### 原厂固件刷入
-        1. 下载对应的 \`factory.bin\` 文件
-        2. 进入原厂固件管理界面
-        3. 选择固件升级，上传文件
-        4. 等待刷机完成，自动重启
-        
-        ### ImmortalWrt 升级
-        1. 下载对应的 \`sysupgrade.bin\` 文件
-        2. 进入 系统 → 备份/升级
-        3. 上传固件文件
-        4. 取消勾选"保留配置"（如需全新安装）
-        5. 点击"刷写固件"
-        
-        ## ⚠️ 注意事项
-        
-        - 刷机有风险，请确保设备型号正确
-        - 建议先备份原厂固件和重要配置
-        - 刷机过程中请勿断电
-        - 如遇问题可尝试恢复模式重刷
-        
-        ## 🔗 相关链接
-        
-        - [ImmortalWrt 官网](https://immortalwrt.org)
-        - [问题反馈](https://github.com/${{ github.repository }}/issues)
+        - **官方 ABI**: ${{ env.OFFICIAL_ABI }}
+        - **本地 ABI**: ${{ env.LOCAL_ABI }}
+        - **对比结果**: ${{ env.ABI_STATUS }}
         
         ---
-        *此固件由 GitHub Actions 自动编译*
         EOF
 
     - name: 发布固件到Release
