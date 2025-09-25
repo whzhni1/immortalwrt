@@ -249,11 +249,9 @@ jobs:
     - name: 更新并安装feeds
       run: |
         cd ImmortalWrt
-        ./scripts/feeds update -a
+        ./scripts/feeds update -i
         ./scripts/feeds install -a
-        echo "======================================"
         echo "Feeds 更新安装完成"
-        echo "======================================"
 
     - name: 加载设备配置和执行脚本Part2
       run: |
