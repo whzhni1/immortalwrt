@@ -76,12 +76,8 @@ jobs:
     - name: 检查项目分支
       uses: actions/checkout@main
       
-
     - name: ABI对比分析
       run: |
-        VERSION="24.10.2"
-        TARGET_PATH="mediatek/filogic"
-        DEVICE_NAME="cmcc_rax3000m"
         echo "======================================"
         echo "🔍 ABI 对比分析"
         echo "======================================"
@@ -92,13 +88,20 @@ jobs:
         OFFICIAL_VERSION="${{ github.event.inputs.REPO_VERSION }}"
         OFFICIAL_VERSION=${OFFICIAL_VERSION#v}
 
-        # 目标路径
-        TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
+        # 平台路径（这里写死为 mediatek/filogic）
+        TARGET_PATH="mediatek/filogic"
+        TARGET_NAME="mediatek-filogic"
 
-        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt
+        # 拼接官方 manifest URL
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/$TARGET_PATH/immortalwrt-$OFFICIAL_VERSION-$TARGET_NAME.manifest"
+
         echo "下载官方manifest: $OFFICIAL_MANIFEST_URL"
 
         if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+          echo "✅ 官方 manifest 下载成功"
+          echo "------ 官方 manifest 内容 (前10行) ------"
+          head -10 official.manifest
+          echo "--------------------------------------"
           OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
           echo "官方ABI: ${OFFICIAL_ABI:-获取失败}"
         else
@@ -109,6 +112,9 @@ jobs:
         # 获取本地 ABI
         LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
         if [ -n "$LOCAL_MANIFEST" ]; then
+          echo "------ 本地 manifest 内容 (前10行) ------"
+          head -10 "$LOCAL_MANIFEST"
+          echo "--------------------------------------"
           LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
           echo "本地ABI: ${LOCAL_ABI:-获取失败}"
         else
