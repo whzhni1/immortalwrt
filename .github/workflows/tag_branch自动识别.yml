@@ -166,69 +166,84 @@ jobs:
         large-packages: true
         docker-images: true
         swap-storage: true
-
+        
     - name: 下载官方SDK
       working-directory: /workdir
       run: |
-        df -hT $PWD
-        echo "======================================"
-        echo "📦 下载官方 SDK"
-        echo "======================================"
-        
-        VERSION="${{ github.event.inputs.REPO_VERSION }}"
-        TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
-        
-        # 获取SDK文件名
-        SDK_INDEX="https://downloads.immortalwrt.org/releases/$VERSION/targets/$TARGET_PATH/"
-        echo "获取SDK列表: $SDK_INDEX"
-        
-        # 查找SDK文件
-        SDK_PAGE=$(wget -qO- "$SDK_INDEX")
-        SDK_NAME=$(echo "$SDK_PAGE" | grep -o 'immortalwrt-sdk-[^"]*\.tar\.xz' | head -1)
-        
-        if [ -z "$SDK_NAME" ]; then
-          echo "❌ 错误：未找到SDK文件"
-          echo "请检查版本号是否正确"
-          exit 1
-        fi
-        
-        SDK_URL="${SDK_INDEX}${SDK_NAME}"
-        echo "SDK文件: $SDK_NAME"
-        echo "下载地址: $SDK_URL"
-        
-        # 下载SDK
-        echo "开始下载..."
-        wget --show-progress "$SDK_URL" -O sdk.tar.xz
-        
-        # 解压SDK
-        echo "解压SDK..."
-        tar -xf sdk.tar.xz
-        
-        # 重命名为统一的目录名
-        mv immortalwrt-sdk-* ImmortalWrt
-        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
-        
-        cd ImmortalWrt
-        
-        # 显示SDK信息
-        echo "======================================"
-        echo "SDK 信息:"
-        if [ -f "version.buildinfo" ]; then
-          echo "版本信息:"
-          cat version.buildinfo
-        fi
-        
-        if [ -f ".config" ]; then
-          echo "默认配置已存在"
-        fi
-        
-        echo "目录结构:"
-        ls -la
-        
-        echo "======================================"
-        echo "✅ SDK 准备完成"
-        echo "======================================"
-
+            df -hT $PWD
+            echo "======================================"
+            echo "📦 下载官方 SDK"
+            echo "======================================"
+            
+            VERSION="${{ github.event.inputs.REPO_VERSION }}"
+            TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
+            
+            # 获取SDK文件名
+            SDK_INDEX="https://downloads.immortalwrt.org/releases/$VERSION/targets/$TARGET_PATH/"
+            echo "获取SDK列表: $SDK_INDEX"
+            
+            # 查找SDK文件 - 同时查找 .tar.zst 和 .tar.xz 格式
+            SDK_PAGE=$(wget -qO- "$SDK_INDEX")
+            
+            # 优先查找 .tar.zst 格式（根据您提供的地址）
+            SDK_NAME=$(echo "$SDK_PAGE" | grep -o 'immortalwrt-sdk-[^"]*\.tar\.zst' | head -1)
+            
+            # 如果没找到 .tar.zst，尝试查找 .tar.xz
+            if [ -z "$SDK_NAME" ]; then
+                  SDK_NAME=$(echo "$SDK_PAGE" | grep -o 'immortalwrt-sdk-[^"]*\.tar\.xz' | head -1)
+            fi
+            
+            if [ -z "$SDK_NAME" ]; then
+                  echo "❌ 错误：未找到SDK文件"
+                  echo "请检查版本号是否正确"
+                  echo "可用的文件列表："
+                  echo "$SDK_PAGE" | grep -o 'href="[^"]*' | sed 's/href="//' | grep -E '\.(tar\.zst|tar\.xz)$'
+                  exit 1
+            fi
+            
+            SDK_URL="${SDK_INDEX}${SDK_NAME}"
+            echo "SDK文件: $SDK_NAME"
+            echo "下载地址: $SDK_URL"
+            
+            # 下载SDK
+            echo "开始下载..."
+            wget --show-progress "$SDK_URL" -O sdk.tar.${SDK_NAME##*.}
+            
+            # 根据文件扩展名解压
+            echo "解压SDK..."
+            if [[ "$SDK_NAME" == *.zst ]]; then
+                  # 需要先安装 zstd
+                  sudo apt-get update && sudo apt-get install -y zstd
+                  tar -I zstd -xf sdk.tar.zst
+            else
+                  tar -xf sdk.tar.xz
+            fi
+            
+            # 重命名为统一的目录名
+            mv immortalwrt-sdk-* ImmortalWrt
+            ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+            
+            cd ImmortalWrt
+            
+            # 显示SDK信息
+            echo "======================================"
+            echo "SDK 信息:"
+            if [ -f "version.buildinfo" ]; then
+                  echo "版本信息:"
+                  cat version.buildinfo
+            fi
+            
+            if [ -f ".config" ]; then
+                  echo "默认配置已存在"
+            fi
+            
+            echo "目录结构:"
+            ls -la
+            
+            echo "======================================"
+            echo "✅ SDK 准备完成"
+            echo "======================================"
+    
     - name: 加载自定义feeds和执行脚本Part1
       if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
       run: |
