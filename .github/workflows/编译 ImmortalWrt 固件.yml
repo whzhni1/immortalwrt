@@ -165,7 +165,7 @@ jobs:
         docker-images: true
         swap-storage: true
 
-        - name: 下载源码
+    - name: 下载源码
       working-directory: /workdir
       run: |
         df -hT $PWD
