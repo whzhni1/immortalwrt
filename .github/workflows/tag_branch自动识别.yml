@@ -377,72 +377,55 @@ jobs:
 
     
     - name: ABI对比分析
-      if: steps.organize.outputs.status == 'success' && !cancelled()
       run: |
-            echo "======================================"
-            echo "🔍 ABI 对比分析"
-            echo "======================================"
-            
-            cd ImmortalWrt
-            
-            # 处理版本号
-            OFFICIAL_VERSION="${{ github.event.inputs.REPO_VERSION }}"
-            OFFICIAL_VERSION=${OFFICIAL_VERSION#v}
-            
-            # 修正目标平台路径（mediatek-filogic -> mediatek/filogic）
-            TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
-            
-            # 构建正确的官方manifest URL
-            OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/$TARGET_PATH/immortalwrt-$OFFICIAL_VERSION-${{ env.TARGET_NAME }}.manifest"
-            
-            echo "下载官方manifest: $OFFICIAL_MANIFEST_URL"
-            
-            # 获取官方ABI
-            if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
-                        OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
-                        echo "官方ABI: ${OFFICIAL_ABI:-获取失败}"
-            else
-                        # 尝试备用URL格式
-                        ALT_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/$TARGET_PATH/immortalwrt-$OFFICIAL_VERSION-$(echo $TARGET_PATH | tr '/' '-').manifest"
-                        if wget -q -O official.manifest "$ALT_URL"; then
-                                    OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
-                                    echo "官方ABI: ${OFFICIAL_ABI:-获取失败}"
-                        else
-                                    OFFICIAL_ABI=""
-                                    echo "官方ABI: 获取失败"
-                        fi
-            fi
-            
-            # 获取本地ABI（扩大搜索范围）
-            LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
-            if [ -n "$LOCAL_MANIFEST" ] && [ -f "$LOCAL_MANIFEST" ]; then
-                        LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
-                        echo "本地ABI: ${LOCAL_ABI:-获取失败}"
-            else
-                        # 尝试从固件目录查找
-                        LOCAL_MANIFEST=$(find ${{ env.FIRMWARE }} -name "*.manifest" 2>/dev/null | head -1)
-                        if [ -n "$LOCAL_MANIFEST" ] && [ -f "$LOCAL_MANIFEST" ]; then
-                                    LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
-                                    echo "本地ABI: ${LOCAL_ABI:-获取失败}"
-                        else
-                                    LOCAL_ABI=""
-                                    echo "本地ABI: 获取失败"
-                        fi
-            fi
-            
-            # 对比结果
-            echo "======================================"
-            if [ -n "$OFFICIAL_ABI" ] && [ -n "$LOCAL_ABI" ]; then
-                        if [ "$OFFICIAL_ABI" = "$LOCAL_ABI" ]; then
-                                    echo "ABI对比结果: 相同 ✅"
-                        else
-                                    echo "ABI对比结果: 不同 ❌"
-                        fi
-            else
-                        echo "ABI对比结果: 无法对比（数据不完整）"
-            fi
-            echo "======================================"
-    
+        echo "======================================"
+        echo "🔍 ABI 对比分析"
+        echo "======================================"
+
+        cd ImmortalWrt
+
+        # 去掉 v 前缀
+        OFFICIAL_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        OFFICIAL_VERSION=${OFFICIAL_VERSION#v}
+
+        # 目标路径
+        TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
+
+        # 拼接官方 manifest URL（必须包含设备名）
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/$TARGET_PATH/immortalwrt-$OFFICIAL_VERSION-${{ env.TARGET_NAME }}-${{ env.DEVICE_NAME }}.manifest"
+
+        echo "下载官方manifest: $OFFICIAL_MANIFEST_URL"
+
+        if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+          OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
+          echo "官方ABI: ${OFFICIAL_ABI:-获取失败}"
+        else
+          echo "❌ 官方manifest获取失败"
+          OFFICIAL_ABI=""
+        fi
+
+        # 获取本地 ABI
+        LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
+        if [ -n "$LOCAL_MANIFEST" ]; then
+          LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
+          echo "本地ABI: ${LOCAL_ABI:-获取失败}"
+        else
+          echo "本地ABI: 获取失败"
+          LOCAL_ABI=""
+        fi
+
+        echo "======================================"
+        if [ -n "$OFFICIAL_ABI" ] && [ -n "$LOCAL_ABI" ]; then
+          if [ "$OFFICIAL_ABI" = "$LOCAL_ABI" ]; then
+            echo "ABI对比结果: 相同 ✅"
+          else
+            echo "ABI对比结果: 不同 ❌"
+          fi
+        else
+          echo "ABI对比结果: 无法对比（数据不完整）"
+        fi
+        echo "======================================"
+
     - name: 上传固件到Artifacts
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && github.event.inputs.UPLOAD_FIRMWARE == 'true'
