@@ -8,16 +8,16 @@
 # Description: Build ImmortalWrt for Multiple Devices
 #
 
-name: tag_branch自动识别
+name: 编译 ImmortalWrt –i
 
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
       REPO_VERSION:
-        description: '选择 ImmortalWrt 版本 (格式: v24.10.2 或分支名)'
+        description: '选择 ImmortalWrt 版本 (格式: 24.10.2 或分支名)'
         required: true
-        default: 'v24.10.2'
+        default: '24.10.2'
         type: string
       DEVICE_MODEL:
         description: '选择配置文件'
@@ -39,7 +39,7 @@ on:
       RUN_PART2:
         description: '执行 Part2 脚本'
         required: false
-        default: true
+        default: false
         type: boolean
       UPLOAD_BIN_DIR:
         description: '上传bin目录'
@@ -180,7 +180,7 @@ jobs:
         # 先尝试获取远程仓库的tags和branches列表
         echo "获取远程仓库信息..."
         
-        # 检查是否为tag（通常以v开头，如v24.10.2）
+        # 检查是否为tag（原始输入）
         if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$REPO_VERSION$"; then
           echo "✅ 检测到 Tag: $REPO_VERSION"
           echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
@@ -192,6 +192,50 @@ jobs:
           fi
           
           VERSION_TYPE="Tag"
+          
+        # 如果输入像版本号（如24.10.3），尝试加上v前缀
+        elif [[ "$REPO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+          VERSION_WITH_V="v$REPO_VERSION"
+          echo "检测到版本号格式，尝试添加 v 前缀: $VERSION_WITH_V"
+          
+          if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$VERSION_WITH_V$"; then
+            echo "✅ 检测到 Tag: $VERSION_WITH_V"
+            echo "执行命令: git clone --depth 1 $REPO_URL -b $VERSION_WITH_V ImmortalWrt"
+            
+            if ! git clone --depth 1 "$REPO_URL" -b "$VERSION_WITH_V" ImmortalWrt; then
+              echo "❌ 错误：无法克隆 tag '$VERSION_WITH_V'"
+              echo "请检查 tag 是否存在"
+              exit 1
+            fi
+            
+            VERSION_TYPE="Tag"
+            REPO_VERSION="$VERSION_WITH_V"  # 更新版本变量
+            echo "REPO_VERSION=$REPO_VERSION" >> $GITHUB_ENV  # 更新环境变量
+            
+          else
+            # 还是找不到，检查是否为branch
+            if git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
+              echo "✅ 检测到 Branch: $REPO_VERSION"
+              echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
+              
+              if ! git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt; then
+                echo "❌ 错误：无法克隆分支 '$REPO_VERSION'"
+                echo "请检查分支是否存在"
+                exit 1
+              fi
+              
+              VERSION_TYPE="Branch"
+            else
+              echo "❌ 错误：'$REPO_VERSION' 和 '$VERSION_WITH_V' 都不是有效的 tag 或 branch"
+              echo ""
+              echo "可用的 Tags（最近10个）："
+              git ls-remote --tags "$REPO_URL" | tail -10 | awk '{print "  - " $2}' | sed 's|refs/tags/||'
+              echo ""
+              echo "可用的 Branches："
+              git ls-remote --heads "$REPO_URL" | awk '{print "  - " $2}' | sed 's|refs/heads/||'
+              exit 1
+            fi
+          fi
           
         # 检查是否为branch
         elif git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
@@ -360,7 +404,7 @@ jobs:
         cd ImmortalWrt/bin/targets/*/*
         rm -rf packages
         # 删除不需要的文件
-        find . -type f -name "*.buildinfo" -o -name "*.manifest" -o -name "*kernel.bin" -o -name "*rootfs.tar.gz" -o -name "*.dtb" | xargs rm -f
+        #find . -type f -name "*.buildinfo" -o -name "*.manifest" -o -name "*kernel.bin" -o -name "*rootfs.tar.gz" -o -name "*.dtb" | xargs rm -f
         # 重命名固件文件
         for file in *; do
           if [[ -f "$file" ]]; then
@@ -375,55 +419,70 @@ jobs:
         ls -lh
         echo "======================================"
 
-    
-    - name: ABI对比分析
+    - name: 获取官方ABI
       run: |
         echo "======================================"
-        echo "🔍 ABI 对比分析"
+        echo "🔍 开始获取官方 ABI"
         echo "======================================"
-
+        
         cd ImmortalWrt
-
-        # 去掉 v 前缀
-        OFFICIAL_VERSION="${{ github.event.inputs.REPO_VERSION }}"
-        OFFICIAL_VERSION=${OFFICIAL_VERSION#v}
-
-        # 目标路径
-        TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
-
-        # 拼接官方 manifest URL（必须包含设备名）
-        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/$TARGET_PATH/immortalwrt-$OFFICIAL_VERSION-${{ env.TARGET_NAME }}-${{ env.DEVICE_NAME }}.manifest"
-
-        echo "下载官方manifest: $OFFICIAL_MANIFEST_URL"
-
+        
+        VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        TARGET_NAME="${{ env.TARGET_NAME }}"
+        TARGET_PATH=$(echo "$TARGET_NAME" | tr '-' '/')
+        
+        # 拼接 URL（通用manifest，不带设备名）
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$VERSION/targets/$TARGET_PATH/immortalwrt-$VERSION-$TARGET_NAME.manifest"
+        echo "拼接的官方地址: $OFFICIAL_MANIFEST_URL"
+        
+        # 下载 manifest
         if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
-          OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
-          echo "官方ABI: ${OFFICIAL_ABI:-获取失败}"
+          echo "✅ 官方 manifest 下载成功"
+          echo "------ manifest 前10行 ------"
+          head -10 official.manifest
+          echo "-----------------------------"
+          
+          # 提取 kernel 行
+          KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
+          echo "提取到的 kernel 行: $KERNEL_LINE"
+          
+          OFFICIAL_ABI=$(echo "$KERNEL_LINE" | awk '{print $3}')
+          echo "解析出的官方 ABI: $OFFICIAL_ABI"
+          echo "OFFICIAL_ABI=$OFFICIAL_ABI" >> $GITHUB_ENV
         else
-          echo "❌ 官方manifest获取失败"
-          OFFICIAL_ABI=""
+          echo "❌ 官方 manifest 下载失败"
+          echo "OFFICIAL_ABI=获取失败" >> $GITHUB_ENV
         fi
-
-        # 获取本地 ABI
+        
+        # 获取本地编译的 ABI
         LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
         if [ -n "$LOCAL_MANIFEST" ]; then
           LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
-          echo "本地ABI: ${LOCAL_ABI:-获取失败}"
+          echo "本地编译 ABI: ${LOCAL_ABI:-获取失败}"
+          echo "LOCAL_ABI=$LOCAL_ABI" >> $GITHUB_ENV
         else
-          echo "本地ABI: 获取失败"
-          LOCAL_ABI=""
+          echo "本地编译 ABI: 获取失败"
+          echo "LOCAL_ABI=获取失败" >> $GITHUB_ENV
         fi
-
+        
+        # ABI 对比
         echo "======================================"
-        if [ -n "$OFFICIAL_ABI" ] && [ -n "$LOCAL_ABI" ]; then
+        if [ -n "$OFFICIAL_ABI" ] && [ "$OFFICIAL_ABI" != "获取失败" ] && [ -n "$LOCAL_ABI" ] && [ "$LOCAL_ABI" != "获取失败" ]; then
           if [ "$OFFICIAL_ABI" = "$LOCAL_ABI" ]; then
-            echo "ABI对比结果: 相同 ✅"
+            echo "✅ ABI 对比结果: 完全一致"
+            echo "ABI_STATUS=✅ 一致" >> $GITHUB_ENV
           else
-            echo "ABI对比结果: 不同 ❌"
+            echo "❌ ABI 对比结果: 不一致"
+            echo "官方: $OFFICIAL_ABI"
+            echo "本地: $LOCAL_ABI"
+            echo "ABI_STATUS=❌ 不一致" >> $GITHUB_ENV
           fi
         else
-          echo "ABI对比结果: 无法对比（数据不完整）"
+          echo "⚠️ ABI 对比结果: 无法对比（数据不完整）"
+          echo "ABI_STATUS=⚠️ 无法对比" >> $GITHUB_ENV
         fi
+        echo "======================================"
+        echo "任务完成"
         echo "======================================"
 
     - name: 上传固件到Artifacts
@@ -457,6 +516,12 @@ jobs:
         - **源码仓库**: ${{ env.REPO_URL }}
         - **源码版本**: ${{ env.REPO_VERSION }}
         
+        ## 🔍 ABI 信息
+        
+        - **官方 ABI**: ${{ env.OFFICIAL_ABI }}
+        - **本地 ABI**: ${{ env.LOCAL_ABI }}
+        - **对比结果**: ${{ env.ABI_STATUS }}
+        
         ---
         EOF
 
@@ -466,9 +531,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        files: |
-          ${{ env.FIRMWARE }}/*
-          abi_analysis_report.md
+        files: ${{ env.FIRMWARE }}/*
         name: ${{ env.DEVICE_FULL_NAME }} - ${{ env.FILE_DATE }}
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
