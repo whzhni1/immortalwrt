@@ -165,7 +165,7 @@ jobs:
         docker-images: true
         swap-storage: true
 
-    - name: 下载源码
+        - name: 下载源码
       working-directory: /workdir
       run: |
         df -hT $PWD
@@ -180,7 +180,7 @@ jobs:
         # 先尝试获取远程仓库的tags和branches列表
         echo "获取远程仓库信息..."
         
-        # 检查是否为tag
+        # 检查是否为tag（原始输入）
         if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$REPO_VERSION$"; then
           echo "✅ 检测到 Tag: $REPO_VERSION"
           echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
@@ -192,6 +192,50 @@ jobs:
           fi
           
           VERSION_TYPE="Tag"
+          
+        # 如果输入像版本号（如24.10.3），尝试加上v前缀
+        elif [[ "$REPO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+          VERSION_WITH_V="v$REPO_VERSION"
+          echo "检测到版本号格式，尝试添加 v 前缀: $VERSION_WITH_V"
+          
+          if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$VERSION_WITH_V$"; then
+            echo "✅ 检测到 Tag: $VERSION_WITH_V"
+            echo "执行命令: git clone --depth 1 $REPO_URL -b $VERSION_WITH_V ImmortalWrt"
+            
+            if ! git clone --depth 1 "$REPO_URL" -b "$VERSION_WITH_V" ImmortalWrt; then
+              echo "❌ 错误：无法克隆 tag '$VERSION_WITH_V'"
+              echo "请检查 tag 是否存在"
+              exit 1
+            fi
+            
+            VERSION_TYPE="Tag"
+            REPO_VERSION="$VERSION_WITH_V"  # 更新版本变量
+            echo "REPO_VERSION=$REPO_VERSION" >> $GITHUB_ENV  # 更新环境变量
+            
+          else
+            # 还是找不到，检查是否为branch
+            if git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
+              echo "✅ 检测到 Branch: $REPO_VERSION"
+              echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
+              
+              if ! git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt; then
+                echo "❌ 错误：无法克隆分支 '$REPO_VERSION'"
+                echo "请检查分支是否存在"
+                exit 1
+              fi
+              
+              VERSION_TYPE="Branch"
+            else
+              echo "❌ 错误：'$REPO_VERSION' 和 '$VERSION_WITH_V' 都不是有效的 tag 或 branch"
+              echo ""
+              echo "可用的 Tags（最近10个）："
+              git ls-remote --tags "$REPO_URL" | tail -10 | awk '{print "  - " $2}' | sed 's|refs/tags/||'
+              echo ""
+              echo "可用的 Branches："
+              git ls-remote --heads "$REPO_URL" | awk '{print "  - " $2}' | sed 's|refs/heads/||'
+              exit 1
+            fi
+          fi
           
         # 检查是否为branch
         elif git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
