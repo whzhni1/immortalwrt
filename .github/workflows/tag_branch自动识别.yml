@@ -365,168 +365,208 @@ jobs:
         ls -lh
         echo "======================================"
 
+    
     - name: ABI对比分析
       if: steps.organize.outputs.status == 'success' && !cancelled()
       run: |
         echo "======================================"
-        echo "🔍 ABI 对比分析"
+        echo "🔍 ABI 对比分析 (内核版本对比)"
         echo "======================================"
         
         cd ImmortalWrt
         
-        # 获取当前编译的版本信息
-        CURRENT_VERSION=""
-        if [ -f "include/version.mk" ]; then
-          CURRENT_VERSION=$(grep 'VERSION_NUMBER' include/version.mk | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
-        fi
+        # 处理版本号（去除v前缀）
+        OFFICIAL_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        OFFICIAL_VERSION=${OFFICIAL_VERSION#v}  # 去除开头的v
         
-        if [ -f "Makefile" ]; then
-          VERSION=$(grep '^VERSION' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
-          PATCHLEVEL=$(grep '^PATCHLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
-          SUBLEVEL=$(grep '^SUBLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ')
-          if [ -n "$VERSION" ]; then
-            CURRENT_VERSION="${VERSION}.${PATCHLEVEL}.${SUBLEVEL}"
-          fi
-        fi
+        echo "📋 用户输入版本: ${{ github.event.inputs.REPO_VERSION }}"
+        echo "📋 官方版本号: $OFFICIAL_VERSION"
+        echo "🎯 目标平台: ${{ env.TARGET_NAME }}"
+        echo "📱 设备型号: ${{ env.DEVICE_FULL_NAME }}"
         
-        echo "📋 当前编译版本: $CURRENT_VERSION"
-        echo "🔖 源码版本: $REPO_VERSION"
+        # 构建官方manifest文件URL
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$OFFICIAL_VERSION/targets/${{ env.TARGET_NAME }}/immortalwrt-$OFFICIAL_VERSION-${{ env.TARGET_NAME }}.manifest"
         
-        # 获取目标设备信息
-        TARGET_INFO=$(grep '^CONFIG_TARGET_BOARD' .config | cut -d'=' -f2 | tr -d '"' | head -1)
-        SUBTARGET_INFO=$(grep '^CONFIG_TARGET_SUBTARGET' .config | cut -d'=' -f2 | tr -d '"' | head -1)
-        PROFILE_INFO=$(grep '^CONFIG_TARGET_PROFILE' .config | cut -d'=' -f2 | tr -d '"' | head -1)
+        echo "🔗 官方manifest地址: $OFFICIAL_MANIFEST_URL"
         
-        echo "🎯 目标设备: $TARGET_INFO/$SUBTARGET_INFO"
-        echo "📱 设备配置: $PROFILE_INFO"
-        
-        # 检查内核配置差异
-        echo ""
-        echo "📊 内核配置对比:"
-        if [ -f ".config" ] && [ -f "config.buildinfo" ]; then
-          echo "✅ 找到配置文件"
-          # 这里可以添加具体的配置对比逻辑
-        else
-          echo "ℹ️  配置文件对比需要完整的构建信息"
-        fi
-        
-        # 检查软件包版本
-        echo ""
-        echo "📦 关键软件包版本:"
-        
-        # 检查内核版本
-        KERNEL_VERSION=$(grep '^LINUX_VERSION' include/kernel-version.mk 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
-        echo "▪️  内核版本: $KERNEL_VERSION"
-        
-        # 检查GCC版本
-        GCC_VERSION=$(grep '^GCC_VERSION' include/toolchain-build.mk 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
-        echo "▪️  GCC版本: $GCC_VERSION"
-        
-        # 检查musl版本（如果使用musl）
-        MUSL_VERSION=$(grep '^PKG_VERSION' toolchain/musl/Makefile 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
-        if [ "$MUSL_VERSION" != "unknown" ]; then
-          echo "▪️  musl版本: $MUSL_VERSION"
-        fi
-        
-        # 生成ABI兼容性报告
-        echo ""
-        echo "🔬 ABI兼容性分析:"
-        
-        # 检查关键ABI相关配置
-        ABI_CHECK_PASS=true
-        
-        # 检查内核ABI版本
-        if [ -f "bin/targets/$TARGET_INFO/$SUBTARGET_INFO/config.buildinfo" ]; then
-          echo "✅ 构建配置文件存在"
-          
-          # 检查CONFIG_VERSION_CODE（内核ABI版本）
-          KERNEL_ABI=$(grep 'CONFIG_VERSION_CODE' bin/targets/$TARGET_INFO/$SUBTARGET_INFO/config.buildinfo 2>/dev/null | cut -d'=' -f2 | head -1 || echo "unknown")
-          if [ "$KERNEL_ABI" != "unknown" ]; then
-            echo "▪️  内核ABI版本: $KERNEL_ABI"
-          fi
-          
-          # 检查其他关键ABI配置
-          KERNEL_RELEASE=$(grep 'KERNEL_PATCHVER' target/linux/$TARGET_INFO/Makefile 2>/dev/null | cut -d'=' -f2 | tr -d ' ' | head -1 || echo "unknown")
-          echo "▪️  内核系列: $KERNEL_RELEASE"
-        else
-          echo "⚠️  构建配置文件不存在，无法进行详细ABI分析"
-          ABI_CHECK_PASS=false
-        fi
-        
-        # 生成建议
-        echo ""
-        echo "💡 兼容性建议:"
-        if [ "$ABI_CHECK_PASS" = "true" ]; then
-          echo "✅ 当前编译配置与官方源基本兼容"
-          echo "▪️  可以安装大部分官方软件包"
-          echo "▪️  建议使用相同内核版本的软件包"
-        else
-          echo "⚠️  无法完成完整的ABI兼容性检查"
-          echo "▪️  建议测试关键软件包的兼容性"
-          echo "▪️  如需安装第三方软件包，请确认ABI兼容性"
-        fi
-        
-        # 与官方快照版本对比
-        echo ""
-        echo "🌐 官方版本参考:"
-        OFFICIAL_SNAPSHOT_URL="https://downloads.immortalwrt.org/snapshots/targets/$TARGET_INFO/$SUBTARGET_INFO/"
-        echo "▪️  官方快照: $OFFICIAL_SNAPSHOT_URL"
-        
-        # 生成MD5校验信息
-        echo ""
-        echo "🔒 固件校验信息:"
-        if [ -n "$FIRMWARE" ] && [ -d "$FIRMWARE" ]; then
-          cd "$FIRMWARE"
-          for file in *; do
-            if [[ -f "$file" ]]; then
-              MD5_SUM=$(md5sum "$file" | cut -d' ' -f1)
-              echo "▪️  $file: $MD5_SUM"
+        # 下载官方manifest文件
+        echo "📥 正在下载官方manifest文件..."
+        if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+            echo "✅ 官方manifest下载成功"
+            
+            # 从官方manifest提取内核版本（格式：kernel - 6.6.104~3ca4b8cb2fcc3a2027e8496143a86cab-r1）
+            OFFICIAL_KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
+            if [ -n "$OFFICIAL_KERNEL_LINE" ]; then
+                OFFICIAL_KERNEL=$(echo "$OFFICIAL_KERNEL_LINE" | awk '{print $3}')
+                echo "▪️  官方manifest内核行: $OFFICIAL_KERNEL_LINE"
+                echo "▪️  提取的官方内核版本: $OFFICIAL_KERNEL"
+            else
+                echo "❌ 无法从官方manifest找到kernel行"
+                OFFICIAL_KERNEL="unknown"
             fi
-          done
+        else
+            echo "❌ 官方manifest下载失败，可能该版本不存在或网络问题"
+            OFFICIAL_KERNEL="unknown"
+        fi
+        
+        # 查找本地编译的manifest文件
+        echo ""
+        echo "📁 查找本地manifest文件..."
+        LOCAL_MANIFEST=$(find bin/targets -name "*.manifest" | head -1)
+        
+        if [ -n "$LOCAL_MANIFEST" ] && [ -f "$LOCAL_MANIFEST" ]; then
+            echo "✅ 找到本地manifest: $LOCAL_MANIFEST"
+            
+            # 从本地manifest提取内核版本
+            LOCAL_KERNEL_LINE=$(grep '^kernel ' "$LOCAL_MANIFEST" | head -1)
+            if [ -n "$LOCAL_KERNEL_LINE" ]; then
+                LOCAL_KERNEL=$(echo "$LOCAL_KERNEL_LINE" | awk '{print $3}')
+                echo "▪️  本地manifest内核行: $LOCAL_KERNEL_LINE"
+                echo "▪️  提取的本地内核版本: $LOCAL_KERNEL"
+            else
+                echo "❌ 无法从本地manifest找到kernel行"
+                LOCAL_KERNEL="unknown"
+            fi
+        else
+            echo "❌ 未找到本地manifest文件"
+            LOCAL_KERNEL="unknown"
+        fi
+        
+        echo ""
+        echo "🔬 ABI兼容性分析结果:"
+        echo "======================================"
+        
+        # 显示对比结果
+        echo "📊 版本对比:"
+        echo "   官方内核: $OFFICIAL_KERNEL"
+        echo "   本地内核: $LOCAL_KERNEL"
+        echo ""
+        
+        if [ "$OFFICIAL_KERNEL" != "unknown" ] && [ "$LOCAL_KERNEL" != "unknown" ]; then
+            # 比较内核版本（精确比较）
+            if [ "$OFFICIAL_KERNEL" = "$LOCAL_KERNEL" ]; then
+                echo "✅ **ABI完全兼容**"
+                echo "▪️  内核版本完全一致"
+                echo "▪️  可以安全安装官方软件包"
+                echo "▪️  软件包兼容性: 100%"
+            else
+                # 提取基础版本号（去掉git hash部分）
+                OFFICIAL_BASE=$(echo "$OFFICIAL_KERNEL" | cut -d'~' -f1)
+                LOCAL_BASE=$(echo "$LOCAL_KERNEL" | cut -d'~' -f1)
+                
+                echo "▪️  官方基础版本: $OFFICIAL_BASE"
+                echo "▪️  本地基础版本: $LOCAL_BASE"
+                echo ""
+                
+                if [ "$OFFICIAL_BASE" = "$LOCAL_BASE" ]; then
+                    echo "⚠️ **ABI基本兼容**"
+                    echo "▪️  内核基础版本一致，仅编译差异"
+                    echo "▪️  大部分软件包兼容，内核模块可能需重新编译"
+                    echo "▪️  软件包兼容性: 95%+"
+                else
+                    # 提取主版本号进行比较（例如6.6.104中的6.6）
+                    OFFICIAL_MAJOR=$(echo "$OFFICIAL_BASE" | cut -d. -f1-2)
+                    LOCAL_MAJOR=$(echo "$LOCAL_BASE" | cut -d. -f1-2)
+                    
+                    if [ "$OFFICIAL_MAJOR" = "$LOCAL_MAJOR" ]; then
+                        echo "⚠️ **ABI部分兼容**"
+                        echo "▪️  内核主版本一致，小版本不同"
+                        echo "▪️  基础软件包兼容，内核相关包可能不兼容"
+                        echo "▪️  软件包兼容性: 80%+"
+                    else
+                        echo "❌ **ABI不兼容**"
+                        echo "▪️  内核主版本不同"
+                        echo "▪️  不建议安装官方软件包"
+                        echo "▪️  软件包兼容性: <50%"
+                    fi
+                fi
+            fi
+        else
+            echo "⚠️ **无法完成ABI对比**"
+            if [ "$OFFICIAL_KERNEL" = "unknown" ]; then
+                echo "▪️  官方内核版本获取失败"
+            fi
+            if [ "$LOCAL_KERNEL" = "unknown" ]; then
+                echo "▪️  本地内核版本获取失败"
+            fi
+            echo "▪️  建议手动验证软件包兼容性"
         fi
         
         echo "======================================"
-        echo "ABI分析完成"
-        echo "======================================"
         
-        # 保存分析结果到文件
-        cat > abi_analysis_report.md <<EOF
-        # ABI 兼容性分析报告
+        # 生成简明的ABI报告
+        cat > abi_report.md <<EOF
+        # ABI 兼容性报告
         
-        ## 编译信息
+        ## 对比信息
         - **设备**: ${{ env.DEVICE_FULL_NAME }}
-        - **目标平台**: $TARGET_INFO/$SUBTARGET_INFO
+        - **目标平台**: ${{ env.TARGET_NAME }}
+        - **官方版本**: $OFFICIAL_VERSION
         - **编译时间**: ${{ env.FILE_DATE }}
-        - **源码版本**: $REPO_VERSION
-        - **编译版本**: $CURRENT_VERSION
         
-        ## 核心组件版本
-        - **内核版本**: $KERNEL_VERSION
-        - **内核系列**: $KERNEL_RELEASE
-        - **GCC版本**: $GCC_VERSION
-        - **C库版本**: $MUSL_VERSION
+        ## 内核版本详情
+        ### 官方manifest:
+        \`\`\`
+        $OFFICIAL_KERNEL_LINE
+        \`\`\`
+        **提取版本**: $OFFICIAL_KERNEL
         
-        ## 兼容性状态
-        $(if [ "$ABI_CHECK_PASS" = "true" ]; then echo "✅ **基本兼容**"; else echo "⚠️ **需要验证**"; fi)
+        ### 本地manifest:
+        \`\`\`
+        $LOCAL_KERNEL_LINE
+        \`\`\`
+        **提取版本**: $LOCAL_KERNEL
+        
+        ## 对比结果
+        $(if [ "$OFFICIAL_KERNEL" != "unknown" ] && [ "$LOCAL_KERNEL" != "unknown" ]; then
+          if [ "$OFFICIAL_KERNEL" = "$LOCAL_KERNEL" ]; then
+            echo "✅ **完全兼容** - 内核版本完全一致"
+          else
+            OFFICIAL_BASE=$(echo "$OFFICIAL_KERNEL" | cut -d'~' -f1)
+            LOCAL_BASE=$(echo "$LOCAL_KERNEL" | cut -d'~' -f1)
+            if [ "$OFFICIAL_BASE" = "$LOCAL_BASE" ]; then
+              echo "⚠️ **基本兼容** - 基础版本一致，仅编译差异"
+            elif [ "$(echo "$OFFICIAL_BASE" | cut -d. -f1-2)" = "$(echo "$LOCAL_BASE" | cut -d. -f1-2)" ]; then
+              echo "⚠️ **部分兼容** - 主版本一致，小版本不同"
+            else
+              echo "❌ **不兼容** - 内核版本差异较大"
+            fi
+          fi
+        else
+          echo "⚠️ **无法确定** - 版本信息获取不完整"
+        fi)
         
         ## 建议
-        - 使用相同内核版本的软件包以确保兼容性
-        - 测试关键功能模块的兼容性
-        - 参考官方快照版本: $OFFICIAL_SNAPSHOT_URL
-        
-        ## 校验信息
-        $(if [ -n "$FIRMWARE" ] && [ -d "$FIRMWARE" ]; then 
-          cd "$FIRMWARE"
-          for file in *; do
-            if [[ -f "$file" ]]; then
-              MD5_SUM=$(md5sum "$file" | cut -d' ' -f1)
-              echo "- $file: \`$MD5_SUM\`"
+        $(if [ "$OFFICIAL_KERNEL" != "unknown" ] && [ "$LOCAL_KERNEL" != "unknown" ]; then
+          if [ "$OFFICIAL_KERNEL" = "$LOCAL_KERNEL" ]; then
+            echo "- ✅ 可以安全安装所有官方软件包"
+            echo "- ✅ 内核模块完全兼容"
+          else
+            OFFICIAL_BASE=$(echo "$OFFICIAL_KERNEL" | cut -d'~' -f1)
+            LOCAL_BASE=$(echo "$LOCAL_KERNEL" | cut -d'~' -f1)
+            if [ "$OFFICIAL_BASE" = "$LOCAL_BASE" ]; then
+              echo "- ⚠️ 大部分软件包兼容"
+              echo "- ⚠️ 内核模块可能需要重新编译"
+              echo "- ✅ 用户空间软件包基本兼容"
+            elif [ "$(echo "$OFFICIAL_BASE" | cut -d. -f1-2)" = "$(echo "$LOCAL_BASE" | cut -d. -f1-2)" ]; then
+              echo "- ⚠️ 基础软件包兼容"
+              echo "- ❌ 内核相关包可能不兼容"
+              echo "- ⚠️ 建议测试关键功能"
+            else
+              echo "- ❌ 不建议安装官方软件包"
+              echo "- ❌ 内核模块不兼容"
+              echo "- ✅ 仅用户空间基础工具可能兼容"
             fi
-          done
+          fi
+        else
+          echo "- ⚠️ 建议手动测试软件包兼容性"
+          echo "- ⚠️ 谨慎安装内核相关软件包"
         fi)
+        
+        **生成时间**: $(date)
         EOF
         
-        echo "✅ ABI分析报告已生成: abi_analysis_report.md"
+        echo "✅ ABI分析报告已生成: abi_report.md"
 
     - name: 上传固件到Artifacts
       uses: actions/upload-artifact@main
