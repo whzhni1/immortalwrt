@@ -20,7 +20,7 @@ on:
         default: 'v24.10.2'
         type: string
       DEVICE_MODEL:
-        description: '选择路由器型号'
+        description: '选择配置文件'
         required: true
         default: 'rax3000m'
         type: choice
@@ -31,6 +31,16 @@ on:
         description: '设置LAN IP地址'
         required: true
         default: '192.168.1.1'
+      RUN_PART1:
+        description: '执行 Part1 脚本'
+        required: false
+        default: true
+        type: boolean
+      RUN_PART2:
+        description: '执行 Part2 脚本'
+        required: false
+        default: true
+        type: boolean
       UPLOAD_BIN_DIR:
         description: '上传bin目录'
         required: false
@@ -237,6 +247,7 @@ jobs:
         echo "======================================"
 
     - name: 加载自定义feeds和执行脚本Part1
+      if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF ImmortalWrt/feeds.conf.default
         chmod +x $DIY_P1_SH
@@ -254,6 +265,7 @@ jobs:
         echo "Feeds 更新安装完成"
 
     - name: 加载设备配置和执行脚本Part2
+      if: ${{ github.event.inputs.RUN_PART2 == 'true' }}
       run: |
         # 检查设备配置文件
         if [ ! -f "${{ env.CONFIG_FILE }}" ]; then
