@@ -1,0 +1,544 @@
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# Description: Build ImmortalWrt using Official ImageBuilder
+#
+
+name: ImageBuilder快速构建
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      REPO_VERSION:
+        description: 'ImmortalWrt 版本 (如: 24.10.3)'
+        required: true
+        default: '24.10.3'
+        type: string
+      DEVICE_MODEL:
+        description: '选择设备型号'
+        required: true
+        default: 'rax3000m'
+        type: choice
+        options:
+          - rax3000m
+          - ax6000
+      LAN_IP:
+        description: '设置LAN IP地址'
+        required: true
+        default: '192.168.1.1'
+      PACKAGES_ADD:
+        description: '要安装的软件包 (空格分隔)'
+        required: false
+        default: 'luci-theme-argon luci-app-ttyd luci-app-diskman'
+        type: string
+      PACKAGES_REMOVE:
+        description: '要移除的软件包 (空格分隔，前面加-)'
+        required: false
+        default: ''
+        type: string
+      RUN_CUSTOM_SCRIPT:
+        description: '执行自定义脚本'
+        required: false
+        default: true
+        type: boolean
+      UPLOAD_FIRMWARE:
+        description: '上传固件到Artifacts'
+        required: false
+        default: true
+        type: boolean
+      UPLOAD_RELEASE:
+        description: '发布固件到Release'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  CUSTOM_SCRIPT: imagebuilder-custom.sh
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    permissions:
+      contents: write
+    
+    steps:
+    - name: 检查项目分支
+      uses: actions/checkout@main
+
+    - name: 设置版本变量
+      run: |
+        # 检查版本输入
+        if [ -z "${{ github.event.inputs.REPO_VERSION }}" ]; then
+          echo "❌ 错误：未指定版本信息"
+          exit 1
+        fi
+        
+        REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        echo "REPO_VERSION=$REPO_VERSION" >> $GITHUB_ENV
+        
+        echo "======================================"
+        echo "📋 编译信息"
+        echo "======================================"
+        echo "ImageBuilder版本: $REPO_VERSION"
+        echo "编译模式: ImageBuilder (快速构建)"
+        echo "======================================"
+
+    - name: 设置设备变量
+      run: |
+        DEVICE_MODEL="${{ github.event.inputs.DEVICE_MODEL }}"
+        if [ -z "$DEVICE_MODEL" ]; then
+          echo "❌ 错误：未指定设备型号"
+          exit 1
+        fi
+        
+        echo "DEVICE_MODEL=$DEVICE_MODEL" >> $GITHUB_ENV
+        echo "CONFIG_FILE=${DEVICE_MODEL}.config" >> $GITHUB_ENV
+        
+        # 根据设备型号设置变量
+        case "$DEVICE_MODEL" in
+          "rax3000m")
+            echo "DEVICE_NAME=cmcc_rax3000m" >> $GITHUB_ENV
+            echo "DEVICE_PROFILE=cmcc_rax3000m" >> $GITHUB_ENV
+            echo "DEVICE_FULL_NAME=CMCC-RAX3000M" >> $GITHUB_ENV
+            echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+            ;;
+          "ax6000")
+            echo "DEVICE_NAME=jdcloud_re-cp-03" >> $GITHUB_ENV
+            echo "DEVICE_PROFILE=jdcloud_re-cp-03" >> $GITHUB_ENV
+            echo "DEVICE_FULL_NAME=JDCloud-AX6000" >> $GITHUB_ENV
+            echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+            ;;
+          *)
+            echo "❌ 错误：不支持的设备型号: $DEVICE_MODEL"
+            exit 1
+            ;;
+        esac
+        
+        echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+        
+        echo "======================================"
+        echo "设备型号: $DEVICE_MODEL"
+        echo "设备名称: $DEVICE_FULL_NAME"
+        echo "目标平台: $TARGET_NAME"
+        echo "======================================"
+
+    - name: 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        # ImageBuilder需要的依赖更少
+        sudo -E apt-get -qq install -y \
+          build-essential libncurses5-dev libncursesw5-dev \
+          zlib1g-dev gawk git gettext libssl-dev xsltproc \
+          rsync wget unzip python3 python3-distutils zstd
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        echo "======================================"
+        echo "✅ 编译环境初始化完成"
+        echo "======================================"
+
+    - name: 清理磁盘空间
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: false
+        swap-storage: false
+
+    - name: 下载官方ImageBuilder
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        echo "======================================"
+        echo "📦 下载官方 ImageBuilder"
+        echo "======================================"
+        
+        VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
+        
+        # 构建ImageBuilder下载URL（注意文件名格式和扩展名）
+        IB_NAME="immortalwrt-imagebuilder-${VERSION}-${{ env.TARGET_NAME }}.Linux-x86_64.tar.zst"
+        IB_URL="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${TARGET_PATH}/${IB_NAME}"
+        
+        echo "ImageBuilder文件: $IB_NAME"
+        echo "下载地址: $IB_URL"
+        
+        # 下载ImageBuilder
+        echo "开始下载..."
+        if ! wget --show-progress "$IB_URL" -O imagebuilder.tar.zst; then
+          echo "❌ 错误：下载失败"
+          echo "尝试查看可用文件..."
+          wget -qO- "https://downloads.immortalwrt.org/releases/${VERSION}/targets/${TARGET_PATH}/" | grep -o 'immortalwrt-imagebuilder[^"]*' | head -5
+          exit 1
+        fi
+        
+        # 解压ImageBuilder（使用zstd）
+        echo "解压ImageBuilder..."
+        tar -I zstd -xf imagebuilder.tar.zst
+        
+        # 重命名为统一的目录名
+        mv immortalwrt-imagebuilder-* ImmortalWrt
+        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+        
+        cd ImmortalWrt
+        
+        # 显示ImageBuilder信息
+        echo "======================================"
+        echo "ImageBuilder 信息:"
+        
+        # 显示可用的设备配置
+        echo "可用的设备配置:"
+        make info | grep -A 5 "Default Packages:" || true
+        
+        echo "目录结构:"
+        ls -la
+        
+        # 显示仓库配置
+        if [ -f "repositories.conf" ]; then
+          echo "软件仓库配置:"
+          cat repositories.conf
+        fi
+        
+        echo "======================================"
+        echo "✅ ImageBuilder 准备完成"
+        echo "======================================"
+
+    - name: 配置自定义文件
+      run: |
+        cd ImmortalWrt
+        
+        # 创建自定义文件目录
+        mkdir -p files/etc/config
+        mkdir -p files/etc/uci-defaults
+        
+        # 设置默认IP地址
+        SET_IP="${{ github.event.inputs.LAN_IP }}"
+        
+        # 验证IP地址格式
+        if ! [[ $SET_IP =~ ^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; then
+            echo "❌ 错误：IP地址格式无效: $SET_IP"
+            exit 1
+        fi
+        
+        # 创建首次启动脚本设置IP
+        cat > files/etc/uci-defaults/99-custom-settings <<EOF
+        #!/bin/sh
+        
+        # 设置LAN IP
+        uci set network.lan.ipaddr='$SET_IP'
+        uci commit network
+        
+        # 设置主机名
+        uci set system.@system[0].hostname='ImmortalWrt'
+        uci set system.@system[0].timezone='CST-8'
+        uci set system.@system[0].zonename='Asia/Shanghai'
+        uci commit system
+        
+        # 设置默认主题（如果安装了argon）
+        if [ -f /usr/lib/lua/luci/themes/argon/cascade.css ]; then
+          uci set luci.main.mediaurlbase='/luci-static/argon'
+          uci commit luci
+        fi
+        
+        exit 0
+        EOF
+        
+        chmod +x files/etc/uci-defaults/99-custom-settings
+        
+        echo "IP_ADDR=$SET_IP" >> $GITHUB_ENV
+        echo "======================================"
+        echo "✅ 自定义文件配置完成"
+        echo "✅ LAN IP 设置为: $SET_IP"
+        echo "======================================"
+
+    - name: 执行自定义脚本
+      if: ${{ github.event.inputs.RUN_CUSTOM_SCRIPT == 'true' }}
+      run: |
+        if [ -f "$CUSTOM_SCRIPT" ]; then
+          chmod +x $CUSTOM_SCRIPT
+          cd ImmortalWrt
+          echo "======================================"
+          echo "执行自定义脚本..."
+          echo "======================================"
+          $GITHUB_WORKSPACE/$CUSTOM_SCRIPT
+        else
+          echo "自定义脚本不存在，跳过"
+        fi
+
+    - name: 准备软件包列表
+      run: |
+        cd ImmortalWrt
+        
+        echo "======================================"
+        echo "📦 准备软件包列表"
+        echo "======================================"
+        
+        # 基础包列表
+        BASE_PACKAGES="luci luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-opkg-zh-cn"
+        BASE_PACKAGES="$BASE_PACKAGES luci-theme-bootstrap default-settings-chn"
+        
+        # 从配置文件读取包列表（如果存在）
+        if [ -f "$GITHUB_WORKSPACE/${{ env.CONFIG_FILE }}" ]; then
+          echo "从配置文件读取软件包..."
+          # 提取CONFIG_PACKAGE_xxx=y的包名
+          CONFIG_PACKAGES=$(grep "^CONFIG_PACKAGE_.*=y" "$GITHUB_WORKSPACE/${{ env.CONFIG_FILE }}" | \
+                           sed 's/CONFIG_PACKAGE_//;s/=y//' | tr '\n' ' ')
+          echo "配置文件中的包: $CONFIG_PACKAGES"
+        else
+          CONFIG_PACKAGES=""
+        fi
+        
+        # 用户指定的额外包
+        ADD_PACKAGES="${{ github.event.inputs.PACKAGES_ADD }}"
+        REMOVE_PACKAGES="${{ github.event.inputs.PACKAGES_REMOVE }}"
+        
+        # 组合所有包
+        ALL_PACKAGES="$BASE_PACKAGES $CONFIG_PACKAGES $ADD_PACKAGES"
+        
+        # 添加要移除的包（前面加-）
+        if [ -n "$REMOVE_PACKAGES" ]; then
+          for pkg in $REMOVE_PACKAGES; do
+            ALL_PACKAGES="$ALL_PACKAGES -$pkg"
+          done
+        fi
+        
+        # 保存到环境变量
+        echo "PACKAGES=$ALL_PACKAGES" >> $GITHUB_ENV
+        
+        echo "最终软件包列表:"
+        echo "$ALL_PACKAGES" | tr ' ' '\n' | sort | uniq
+        echo "======================================"
+
+    - name: 构建固件
+      id: compile
+      run: |
+        cd ImmortalWrt
+        echo "======================================"
+        echo "🔨 开始构建固件（ImageBuilder模式）"
+        echo "======================================"
+        
+        # 显示构建命令
+        echo "执行命令:"
+        echo "make image PROFILE=\"${{ env.DEVICE_PROFILE }}\" PACKAGES=\"$PACKAGES\" FILES=\"files\""
+        
+        # 构建固件
+        make image \
+          PROFILE="${{ env.DEVICE_PROFILE }}" \
+          PACKAGES="$PACKAGES" \
+          FILES="files" \
+          EXTRA_IMAGE_NAME="${{ env.FILE_DATE }}" || {
+            echo "❌ 构建失败"
+            echo "查看错误日志:"
+            cat .config 2>/dev/null || true
+            exit 1
+          }
+        
+        # 检查构建结果
+        if [ -d "bin/targets" ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "======================================"
+          echo "✅ 固件构建成功"
+          echo "======================================"
+          
+          # 显示构建结果
+          echo "构建产物:"
+          find bin/targets -type f KATEX_INLINE_OPEN -name "*.bin" -o -name "*.img.gz" KATEX_INLINE_CLOSE | head -10
+        else
+          echo "❌ 构建失败，未生成固件"
+          exit 1
+        fi
+
+    - name: 检查磁盘使用情况
+      if: (!cancelled())
+      run: df -hT
+
+    - name: 获取官方ABI对比
+      run: |
+        echo "======================================"
+        echo "🔍 ABI 信息获取"
+        echo "======================================"
+        
+        cd ImmortalWrt
+        
+        VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        TARGET_NAME="${{ env.TARGET_NAME }}"
+        TARGET_PATH=$(echo "$TARGET_NAME" | tr '-' '/')
+        
+        # 获取官方ABI
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$VERSION/targets/$TARGET_PATH/immortalwrt-$VERSION-$TARGET_NAME.manifest"
+        echo "获取官方manifest: $OFFICIAL_MANIFEST_URL"
+        
+        if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+          OFFICIAL_ABI=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
+          echo "官方 ABI: ${OFFICIAL_ABI:-获取失败}"
+          echo "OFFICIAL_ABI=$OFFICIAL_ABI" >> $GITHUB_ENV
+        else
+          echo "官方 ABI: 获取失败"
+          echo "OFFICIAL_ABI=获取失败" >> $GITHUB_ENV
+        fi
+        
+        # 获取本地构建的ABI（ImageBuilder使用官方内核，所以ABI应该一致）
+        LOCAL_MANIFEST=$(find bin/targets -name "*.manifest" 2>/dev/null | head -1)
+        if [ -n "$LOCAL_MANIFEST" ]; then
+          LOCAL_ABI=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
+          echo "本地 ABI: ${LOCAL_ABI:-获取失败}"
+          echo "LOCAL_ABI=$LOCAL_ABI" >> $GITHUB_ENV
+        else
+          echo "本地 ABI: 获取失败"
+          echo "LOCAL_ABI=获取失败" >> $GITHUB_ENV
+        fi
+        
+        # ABI对比（ImageBuilder构建的固件ABI应该与官方完全一致）
+        echo "======================================"
+        if [ -n "$OFFICIAL_ABI" ] && [ "$OFFICIAL_ABI" != "获取失败" ] && [ -n "$LOCAL_ABI" ] && [ "$LOCAL_ABI" != "获取失败" ]; then
+          if [ "$OFFICIAL_ABI" = "$LOCAL_ABI" ]; then
+            echo "✅ ABI 对比结果: 完全一致 (预期结果)"
+            echo "ABI_STATUS=✅ 一致" >> $GITHUB_ENV
+          else
+            echo "⚠️ ABI 对比结果: 不一致 (异常)"
+            echo "官方: $OFFICIAL_ABI"
+            echo "本地: $LOCAL_ABI"
+            echo "ABI_STATUS=⚠️ 不一致" >> $GITHUB_ENV
+          fi
+        else
+          echo "⚠️ ABI 对比结果: 无法对比"
+          echo "ABI_STATUS=⚠️ 无法对比" >> $GITHUB_ENV
+        fi
+        echo "======================================"
+
+    - name: 整理固件文件
+      id: organize
+      if: github.event.inputs.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd ImmortalWrt/bin/targets/*/*
+        rm -rf packages
+        
+        # 重命名固件文件
+        for file in *; do
+          if [[ -f "$file" ]]; then
+            # 提取文件扩展名
+            ext="${file##*.}"
+            # 根据文件类型重命名
+            case "$file" in
+              *sysupgrade*)
+                new_name="${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-ImageBuilder-sysupgrade.$ext"
+                ;;
+              *factory*)
+                new_name="${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-ImageBuilder-factory.$ext"
+                ;;
+              *)
+                new_name="${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-ImageBuilder-${file#*${{ env.DEVICE_NAME }}-}"
+                ;;
+            esac
+            mv "$file" "$new_name" 2>/dev/null || mv "$file" "${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-ImageBuilder-$file"
+          fi
+        done
+        
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+        
+        echo "======================================"
+        echo "📦 固件文件列表:"
+        echo "======================================"
+        ls -lh *.bin *.img.gz 2>/dev/null || ls -lh
+        echo "======================================"
+
+    - name: 上传固件到Artifacts
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && github.event.inputs.UPLOAD_FIRMWARE == 'true'
+      with:
+        name: ${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-ImageBuilder-Firmware
+        path: ${{ env.FIRMWARE }}
+
+    - name: 生成发布标签
+      id: tag
+      if: github.event.inputs.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+        echo "release_tag=${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-ImageBuilder" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
+        
+        # 生成发布说明
+        cat > release.txt <<EOF
+        # ${{ env.DEVICE_FULL_NAME }} 固件 (ImageBuilder构建)
+        
+        ## 📋 固件信息
+        
+        - **设备型号**: ${{ env.DEVICE_FULL_NAME }}
+        - **构建方式**: 官方ImageBuilder (快速构建)
+        - **目标平台**: ${{ env.TARGET_NAME }}
+        - **构建时间**: ${{ env.FILE_DATE }}
+        - **登录地址**: ${{ env.IP_ADDR }}
+        - **默认密码**: 无密码或 password
+        
+        ## 📦 版本信息
+        
+        - **ImageBuilder版本**: ${{ env.REPO_VERSION }}
+        - **安装的软件包**: 
+          - 添加: ${{ github.event.inputs.PACKAGES_ADD }}
+          - 移除: ${{ github.event.inputs.PACKAGES_REMOVE }}
+        
+        ## 🔍 ABI 信息
+        
+        - **官方 ABI**: ${{ env.OFFICIAL_ABI }}
+        - **本地 ABI**: ${{ env.LOCAL_ABI }}
+        - **对比结果**: ${{ env.ABI_STATUS }}
+        
+        ## ⚡ ImageBuilder优势
+        
+        - ✅ 构建速度极快（仅需几分钟）
+        - ✅ ABI与官方固件100%一致
+        - ✅ 可直接安装官方仓库所有软件包
+        - ✅ 稳定性与官方固件相同
+        - ⚠️ 仅支持预编译包，无法编译新的内核模块
+        
+        ## ⚠️ 注意事项
+        
+        - 此固件使用官方ImageBuilder构建
+        - 内核与官方固件完全相同
+        - 升级前请备份重要配置
+        
+        ---
+        *自动构建 by GitHub Actions*
+        EOF
+
+    - name: 发布固件到Release
+      uses: softprops/action-gh-release@v2.1.0
+      if: steps.tag.outputs.status == 'success' && github.event.inputs.UPLOAD_RELEASE == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ env.FIRMWARE }}/*
+        name: ${{ env.DEVICE_FULL_NAME }} - ${{ env.FILE_DATE }} (ImageBuilder)
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        draft: false
+        prerelease: false
+
+    - name: 删除旧的workflow运行记录
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 7
+        keep_minimum_runs: 10
+
+    - name: 删除旧的Releases
+      uses: dev-drprasad/delete-older-releases@v0.3.2
+      if: github.event.inputs.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 10
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
