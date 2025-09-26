@@ -350,65 +350,65 @@ jobs:
     - name: 修改内核编译脚本以使用固定 vermagic
       if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' && env.VERMAGIC_STATUS == '✅ 已获取' }}
       run: |
-        cat << 'SHELL_SCRIPT' | bash
         echo "======================================"
         echo "🔧 修改内核编译脚本"
         echo "======================================"
         
         cd ImmortalWrt
         
-        # 查找并替换 vermagic 生成行
-        echo "正在查找 vermagic 相关配置行..."
-
-        # 先检查文件是否存在
-        if [ ! -f "$KERNEL_DEFAULTS_FILE" ]; then
-          echo "❌ 错误：文件 $KERNEL_DEFAULTS_FILE 不存在"
+        # 检查 .vermagic 文件是否存在
+        if [ ! -f ".vermagic" ]; then
+          echo "❌ 错误：.vermagic 文件不存在"
           exit 1
         fi
+        
         echo "当前目录的 .vermagic 内容: $(cat .vermagic)"
-
-        # 正确设置文件路径
+        
+        # 设置文件路径
         KERNEL_DEFAULTS_FILE="include/kernel-defaults.mk"
         echo "查找文件: $KERNEL_DEFAULTS_FILE"
-
+        
         # 检查文件是否存在
         if [ ! -f "$KERNEL_DEFAULTS_FILE" ]; then
           echo "❌ 错误：文件 $KERNEL_DEFAULTS_FILE 不存在"
           echo "当前目录: $(pwd)"
-          echo "文件列表:"
-          ls -la include/ | head -10
-         exit 1
+          echo "include目录内容:"
+          ls -la include/ 2>/dev/null || echo "include目录不存在"
+          exit 1
         fi
-
+        
+        echo "✅ 文件存在，开始修改..."
+        echo "正在查找 vermagic 相关配置行..."
+        
         # 使用更宽松的搜索条件
         if grep -q "\.vermagic" "$KERNEL_DEFAULTS_FILE"; then
           echo "找到 vermagic 相关行:"
           grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE"
-  
+          
           # 备份文件
           cp "$KERNEL_DEFAULTS_FILE" "${KERNEL_DEFAULTS_FILE}.backup"
           echo "已备份文件"
-  
-         # 方法1: 使用 sed 的 c 命令替换整行
+          
+          # 方法1: 使用 sed 的 c 命令替换整行
           echo "尝试方法1: sed c 命令..."
           sed -i '/grep.*mkhash md5 > \$(LINUX_DIR)\/\.vermagic/c\cp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic' "$KERNEL_DEFAULTS_FILE"
-  
+          
           if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
             echo "✅ 方法1成功"
           else
             echo "❌ 方法1失败，尝试方法2"
             cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
-    
+            
             # 方法2: 使用更简单的 sed 替换
-           echo "尝试方法2: 简单 sed 替换..."
-            sed -i 's|grep.*mkhash md5 > \$(LINUX_DIR)/\.vermagic|cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic|' "$KERNEL_DEFAULTS_FILE"
-    
+            echo "尝试方法2: 简单 sed 替换..."
+            sed -i 's|.*grep.*mkhash md5 > \$(LINUX_DIR)/\.vermagic.*|cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic|' "$KERNEL_DEFAULTS_FILE"
+            
             if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
               echo "✅ 方法2成功"
             else
               echo "❌ 方法2失败，尝试方法3"
               cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
-      
+              
               # 方法3: 使用 awk 替换
               echo "尝试方法3: awk 替换..."
               awk '/\.vermagic/ && /grep/ && /mkhash/ { 
@@ -417,49 +417,47 @@ jobs:
               !(/\.vermagic/ && /grep/ && /mkhash/) { 
                 print 
               }' "$KERNEL_DEFAULTS_FILE" > "$KERNEL_DEFAULTS_FILE.tmp" && mv "$KERNEL_DEFAULTS_FILE.tmp" "$KERNEL_DEFAULTS_FILE"
-      
+              
               if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
                 echo "✅ 方法3成功"
               else
                 echo "❌ 方法3失败，尝试方法4"
                 cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
-        
-                # 方法4: 显示具体内容并手动替换
-                echo "尝试方法4: 显示具体行内容..."
-                grep -A5 -B5 "\.vermagic" "$KERNEL_DEFAULTS_FILE"
-        
-                # 找到具体行号
-                LINE_NUM=$(grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" | grep "grep" | head -1 | cut -d: -f1)
+                
+                # 方法4: 找到具体行号替换
+                echo "尝试方法4: 行号替换..."
+                LINE_NUM=$(grep -n "grep.*mkhash md5 > \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE" | head -1 | cut -d: -f1)
                 if [ -n "$LINE_NUM" ]; then
                   echo "找到目标行号: $LINE_NUM"
                   sed -i "${LINE_NUM}s/.*/\tcp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic/" "$KERNEL_DEFAULTS_FILE"
-                  else
+                else
                   # 方法5: 使用行范围替换
                   echo "尝试方法5: 行范围替换..."
                   sed -i '/\.config\.set/,/\.vermagic/ s/.*grep.*mkhash.*\.vermagic.*/\tcp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic/' "$KERNEL_DEFAULTS_FILE"
                 fi
-        
+                
                 if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
                   echo "✅ 方法4/5成功"
                 else
                   echo "❌ 所有自动方法失败，使用最终手段"
                   cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
-          
+                  
                   # 最终手段：直接插入新行并注释旧行
                   echo "使用最终手段：插入新行并注释旧行"
-                  sed -i '/grep.*\.config\.set.*mkhash.*\.vermagic/ i\cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic' "$KERNEL_DEFAULTS_FILE"
+                  sed -i '/grep.*\.config\.set.*mkhash.*\.vermagic/ i\\tcp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic' "$KERNEL_DEFAULTS_FILE"
                   sed -i '/grep.*\.config\.set.*mkhash.*\.vermagic/ s/^/# /' "$KERNEL_DEFAULTS_FILE"
+                  echo "⚠️ 使用注释方式修改"
                 fi
-             fi
+              fi
             fi
           fi
-  
+          
           echo "修改后的相关行:"
           grep -A2 -B2 "\.vermagic" "$KERNEL_DEFAULTS_FILE"
           echo "======================================"
           echo "内核编译脚本修改完成"
           echo "======================================"
-  
+          
         else
           echo "❌ 错误：未找到包含 .vermagic 的行"
           echo "文件内容预览（相关部分）:"
