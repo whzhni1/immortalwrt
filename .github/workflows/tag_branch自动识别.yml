@@ -146,7 +146,7 @@ jobs:
           gettext git java-propose-classpath libelf-dev libncurses5-dev \
           libncursesw5-dev libssl-dev python3 unzip wget \
           python3-distutils python3-setuptools python3-dev rsync \
-          subversion swig time xsltproc zlib1g-dev
+          subversion swig time xsltproc zlib1g-dev zstd  # 添加zstd
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -166,84 +166,111 @@ jobs:
         large-packages: true
         docker-images: true
         swap-storage: true
-        
+
     - name: 下载官方SDK
       working-directory: /workdir
       run: |
-            df -hT $PWD
-            echo "======================================"
-            echo "📦 下载官方 SDK"
-            echo "======================================"
-            
-            VERSION="${{ github.event.inputs.REPO_VERSION }}"
-            TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
-            
-            # 获取SDK文件名
-            SDK_INDEX="https://downloads.immortalwrt.org/releases/$VERSION/targets/$TARGET_PATH/"
-            echo "获取SDK列表: $SDK_INDEX"
-            
-            # 查找SDK文件 - 同时查找 .tar.zst 和 .tar.xz 格式
-            SDK_PAGE=$(wget -qO- "$SDK_INDEX")
-            
-            # 优先查找 .tar.zst 格式（根据您提供的地址）
-            SDK_NAME=$(echo "$SDK_PAGE" | grep -o 'immortalwrt-sdk-[^"]*\.tar\.zst' | head -1)
-            
-            # 如果没找到 .tar.zst，尝试查找 .tar.xz
-            if [ -z "$SDK_NAME" ]; then
-                  SDK_NAME=$(echo "$SDK_PAGE" | grep -o 'immortalwrt-sdk-[^"]*\.tar\.xz' | head -1)
-            fi
-            
-            if [ -z "$SDK_NAME" ]; then
-                  echo "❌ 错误：未找到SDK文件"
-                  echo "请检查版本号是否正确"
-                  echo "可用的文件列表："
-                  echo "$SDK_PAGE" | grep -o 'href="[^"]*' | sed 's/href="//' | grep -E '\.(tar\.zst|tar\.xz)$'
-                  exit 1
-            fi
-            
-            SDK_URL="${SDK_INDEX}${SDK_NAME}"
-            echo "SDK文件: $SDK_NAME"
-            echo "下载地址: $SDK_URL"
-            
-            # 下载SDK
-            echo "开始下载..."
-            wget --show-progress "$SDK_URL" -O sdk.tar.${SDK_NAME##*.}
-            
-            # 根据文件扩展名解压
-            echo "解压SDK..."
-            if [[ "$SDK_NAME" == *.zst ]]; then
-                  # 需要先安装 zstd
-                  sudo apt-get update && sudo apt-get install -y zstd
-                  tar -I zstd -xf sdk.tar.zst
-            else
-                  tar -xf sdk.tar.xz
-            fi
-            
-            # 重命名为统一的目录名
-            mv immortalwrt-sdk-* ImmortalWrt
-            ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
-            
-            cd ImmortalWrt
-            
-            # 显示SDK信息
-            echo "======================================"
-            echo "SDK 信息:"
-            if [ -f "version.buildinfo" ]; then
-                  echo "版本信息:"
-                  cat version.buildinfo
-            fi
-            
-            if [ -f ".config" ]; then
-                  echo "默认配置已存在"
-            fi
-            
-            echo "目录结构:"
-            ls -la
-            
-            echo "======================================"
-            echo "✅ SDK 准备完成"
-            echo "======================================"
-    
+        df -hT $PWD
+        echo "======================================"
+        echo "📦 下载官方 SDK"
+        echo "======================================"
+        
+        VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        TARGET_PATH=$(echo "${{ env.TARGET_NAME }}" | tr '-' '/')
+        
+        # 获取SDK文件名（注意是.tar.zst格式）
+        SDK_INDEX="https://downloads.immortalwrt.org/releases/$VERSION/targets/$TARGET_PATH/"
+        echo "获取SDK列表: $SDK_INDEX"
+        
+        # 查找SDK文件（修正为.tar.zst）
+        SDK_PAGE=$(wget -qO- "$SDK_INDEX")
+        SDK_NAME=$(echo "$SDK_PAGE" | grep -o 'immortalwrt-sdk-[^"]*\.tar\.zst' | head -1)
+        
+        if [ -z "$SDK_NAME" ]; then
+          echo "❌ 错误：未找到SDK文件"
+          echo "尝试列出可用的SDK文件："
+          echo "$SDK_PAGE" | grep -o 'immortalwrt-sdk[^"]*' | head -5
+          exit 1
+        fi
+        
+        SDK_URL="${SDK_INDEX}${SDK_NAME}"
+        echo "SDK文件: $SDK_NAME"
+        echo "下载地址: $SDK_URL"
+        
+        # 下载SDK
+        echo "开始下载..."
+        if ! wget --show-progress "$SDK_URL" -O sdk.tar.zst; then
+          echo "❌ 下载失败"
+          echo "尝试直接构建URL..."
+          # 备用方案：直接构建SDK文件名
+          SDK_NAME="immortalwrt-sdk-${VERSION}-${{ env.TARGET_NAME }}_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+          SDK_URL="${SDK_INDEX}${SDK_NAME}"
+          echo "尝试备用URL: $SDK_URL"
+          
+          if ! wget --show-progress "$SDK_URL" -O sdk.tar.zst; then
+            echo "❌ 备用URL也失败了"
+            exit 1
+          fi
+        fi
+        
+        # 解压SDK（使用zstd解压）
+        echo "解压SDK..."
+        # 检查是否安装了zstd
+        if ! command -v zstd &> /dev/null; then
+          echo "安装zstd..."
+          sudo apt-get update && sudo apt-get install -y zstd
+        fi
+        
+        # 使用tar的zstd支持解压
+        tar -I zstd -xf sdk.tar.zst || tar --use-compress-program=unzstd -xf sdk.tar.zst
+        
+        # 重命名为统一的目录名
+        mv immortalwrt-sdk-* ImmortalWrt
+        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+        
+        cd ImmortalWrt
+        
+        # 修复GLIBC兼容性问题
+        echo "======================================"
+        echo "🔧 修复GLIBC兼容性"
+        echo "======================================"
+        
+        # 方法1：使用系统库替代SDK自带的库
+        if [ -d "staging_dir/host/lib" ]; then
+          # 备份原始库
+          mv staging_dir/host/lib staging_dir/host/lib.bak || true
+          # 创建符号链接到系统库
+          ln -sf /usr/lib/x86_64-linux-gnu staging_dir/host/lib
+        fi
+        
+        # 方法2：设置LD_LIBRARY_PATH优先使用系统库
+        echo "export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH" >> ~/.bashrc
+        export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+        
+        # 方法3：重新编译host工具
+        echo "重新编译必要的host工具..."
+        make tools/ucert/clean
+        make tools/ucert/compile -j$(nproc) || true
+        
+        # 显示SDK信息
+        echo "======================================"
+        echo "SDK 信息:"
+        if [ -f "version.buildinfo" ]; then
+          echo "版本信息:"
+          cat version.buildinfo
+        fi
+        
+        if [ -f ".config" ]; then
+          echo "默认配置已存在"
+        fi
+        
+        echo "目录结构:"
+        ls -la
+        
+        echo "======================================"
+        echo "✅ SDK 准备完成"
+        echo "======================================"
+
     - name: 加载自定义feeds和执行脚本Part1
       if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
       run: |
@@ -265,6 +292,9 @@ jobs:
     - name: 更新并安装feeds
       run: |
         cd ImmortalWrt
+        
+        # 设置环境变量确保使用正确的库
+        export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
         
         # 添加自定义软件源（可选）
         cat >> feeds.conf.default <<EOF
@@ -314,7 +344,7 @@ jobs:
         EOF
         fi
         
-        # 添加用户指定的额外软件包（通过输入参数）
+        # 添加用户指定的额外软件包
         if [ -n "${{ github.event.inputs.CUSTOM_PACKAGES }}" ]; then
           echo "======================================"
           echo "➕ 添加额外软件包: ${{ github.event.inputs.CUSTOM_PACKAGES }}"
@@ -336,13 +366,6 @@ jobs:
         echo "======================================"
         echo "✅ 配置完成"
         echo "======================================"
-        
-        # 显示最终配置的关键信息
-        echo "最终配置摘要:"
-        echo "- 目标设备: $(grep 'CONFIG_TARGET_.*DEVICE' .config | grep '=y')"
-        echo "- 主题: $(grep 'CONFIG_PACKAGE_luci-theme' .config | grep '=y' | wc -l) 个"
-        echo "- 应用: $(grep 'CONFIG_PACKAGE_luci-app' .config | grep '=y' | wc -l) 个"
-        echo "- RootFS大小: $(grep 'CONFIG_TARGET_ROOTFS_PARTSIZE' .config)"
 
     - name: 执行自定义脚本Part2
       if: ${{ github.event.inputs.RUN_PART2 == 'true' }}
@@ -395,6 +418,10 @@ jobs:
       id: package
       run: |
         cd ImmortalWrt
+        
+        # 设置环境变量
+        export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+        
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -409,6 +436,9 @@ jobs:
         echo "======================================"
         echo "🔨 开始编译固件（SDK模式）"
         echo "======================================"
+        
+        # 设置环境变量
+        export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
         
         echo "使用 $(nproc) 线程编译"
         
