@@ -357,138 +357,101 @@ jobs:
         
         cd ImmortalWrt
         
-        # 检查 .vermagic 文件是否存在
-        if [ ! -f ".vermagic" ]; then
-          echo "❌ 错误：.vermagic 文件不存在"
-          exit 1
-        fi
-        
-        echo "当前目录的 .vermagic 内容: $(cat .vermagic)"
-        
-        # 查找并修改 kernel-defaults.mk 文件
-        KERNEL_DEFAULTS_FILE="include/kernel-defaults.mk"
-        
+        # 查找并替换 vermagic 生成行
+        echo "正在查找 vermagic 相关配置行..."
+
+        # 先检查文件是否存在
         if [ ! -f "$KERNEL_DEFAULTS_FILE" ]; then
-          echo "❌ 错误：未找到 $KERNEL_DEFAULTS_FILE"
+          echo "❌ 错误：文件 $KERNEL_DEFAULTS_FILE 不存在"
           exit 1
         fi
+
+        # 使用更宽松的搜索条件
+        if grep -q "\.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+          echo "找到 vermagic 相关行:"
+          grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE"
+  
+          # 备份文件
+          cp "$KERNEL_DEFAULTS_FILE" "${KERNEL_DEFAULTS_FILE}.backup"
+          echo "已备份文件"
+  
+         # 方法1: 使用 sed 的 c 命令替换整行
+          echo "尝试方法1: sed c 命令..."
+          sed -i '/grep.*mkhash md5 > \$(LINUX_DIR)\/\.vermagic/c\cp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic' "$KERNEL_DEFAULTS_FILE"
+  
+          if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+            echo "✅ 方法1成功"
+          else
+            echo "❌ 方法1失败，尝试方法2"
+            cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
+    
+            # 方法2: 使用更简单的 sed 替换
+           echo "尝试方法2: 简单 sed 替换..."
+            sed -i 's|grep.*mkhash md5 > \$(LINUX_DIR)/\.vermagic|cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic|' "$KERNEL_DEFAULTS_FILE"
+    
+            if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+              echo "✅ 方法2成功"
+            else
+              echo "❌ 方法2失败，尝试方法3"
+              cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
+      
+              # 方法3: 使用 awk 替换
+              echo "尝试方法3: awk 替换..."
+              awk '/\.vermagic/ && /grep/ && /mkhash/ { 
+                print "\tcp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic" 
+              } 
+              !(/\.vermagic/ && /grep/ && /mkhash/) { 
+                print 
+              }' "$KERNEL_DEFAULTS_FILE" > "$KERNEL_DEFAULTS_FILE.tmp" && mv "$KERNEL_DEFAULTS_FILE.tmp" "$KERNEL_DEFAULTS_FILE"
+      
+              if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+                echo "✅ 方法3成功"
+              else
+                echo "❌ 方法3失败，尝试方法4"
+                cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
         
-        # 备份原文件
-        cp "$KERNEL_DEFAULTS_FILE" "${KERNEL_DEFAULTS_FILE}.backup"
+                # 方法4: 显示具体内容并手动替换
+                echo "尝试方法4: 显示具体行内容..."
+                grep -A5 -B5 "\.vermagic" "$KERNEL_DEFAULTS_FILE"
         
-        echo "======================================"
-        echo "查找原始 vermagic 生成行..."
+                # 找到具体行号
+                LINE_NUM=$(grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" | grep "grep" | head -1 | cut -d: -f1)
+                if [ -n "$LINE_NUM" ]; then
+                  echo "找到目标行号: $LINE_NUM"
+                  sed -i "${LINE_NUM}s/.*/\tcp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic/" "$KERNEL_DEFAULTS_FILE"
+                  else
+                  # 方法5: 使用行范围替换
+                  echo "尝试方法5: 行范围替换..."
+                  sed -i '/\.config\.set/,/\.vermagic/ s/.*grep.*mkhash.*\.vermagic.*/\tcp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic/' "$KERNEL_DEFAULTS_FILE"
+                fi
         
-        # 显示包含 .vermagic 的所有行
-        echo "文件中所有包含 .vermagic 的行："
-        grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" || echo "未找到包含 .vermagic 的行"
-        
-        # 创建 Python 脚本文件
-        cat > /tmp/fix_vermagic.py << 'EOF'
-        import re
-        import sys
-        
-        kernel_file = "include/kernel-defaults.mk"
-        
-        try:
-            # 读取文件
-            with open(kernel_file, 'r') as f:
-                lines = f.readlines()
-            
-            # 查找目标行
-            target_line_index = -1
-            original_line = ""
-            
-            for i, line in enumerate(lines):
-                # 匹配多种可能的格式
-                # 1. grep '=[ym]' ... > $(LINUX_DIR)/.vermagic
-                # 2. grep '=```math
-ym```' ... > $(LINUX_DIR)/.vermagic  
-                # 3. .config.set | ... | md5 > $(LINUX_DIR)/.vermagic
-                if ".vermagic" in line and "$(LINUX_DIR)" in line:
-                    if ("grep" in line and "ym" in line) or \
-                       (".config.set" in line) or \
-                       ("md5" in line and ">" in line):
-                        target_line_index = i
-                        original_line = line
-                        print(f"找到目标行 (第{i+1}行): {line.strip()}")
-                        break
-            
-            if target_line_index != -1:
-                # 获取原始缩进
-                indent = len(original_line) - len(original_line.lstrip())
-                indent_str = original_line[:indent]
-                
-                # 替换为新行
-                new_line = f"{indent_str}cp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic\n"
-                lines[target_line_index] = new_line
-                
-                # 写回文件
-                with open(kernel_file, 'w') as f:
-                    f.writelines(lines)
-                
-                print(f"✅ 成功替换第 {target_line_index + 1} 行")
-                print(f"新内容: {new_line.strip()}")
-                sys.exit(0)
-            else:
-                print("❌ 未找到目标行")
-                sys.exit(1)
-                
-        except Exception as e:
-            print(f"❌ 处理失败: {e}")
-            sys.exit(1)
-        EOF
-        
-        # 执行 Python 脚本
-        python3 /tmp/fix_vermagic.py
-        PYTHON_EXIT_CODE=$?
-        
-        if [ $PYTHON_EXIT_CODE -eq 0 ]; then
-          echo "✅ Python 脚本执行成功"
-        else
-          echo "❌ Python 脚本执行失败，尝试备用方案..."
+                if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+                  echo "✅ 方法4/5成功"
+                else
+                  echo "❌ 所有自动方法失败，使用最终手段"
+                  cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
           
-          # 恢复备份
-          cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
-          
-          # 备用方案：直接查找并替换
-          # 获取包含 .vermagic 且包含 > 符号的行号
-          LINE_NUM=$(grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" | grep ">" | head -1 | cut -d: -f1)
-          
-          if [ -n "$LINE_NUM" ]; then
-            echo "找到目标在第 $LINE_NUM 行"
-            
-            # 使用 sed 替换该行
-            sed -i "${LINE_NUM}s/.*/\tcp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic/" "$KERNEL_DEFAULTS_FILE"
-            
-            echo "✅ 使用 sed 替换完成"
+                  # 最终手段：直接插入新行并注释旧行
+                  echo "使用最终手段：插入新行并注释旧行"
+                  sed -i '/grep.*\.config\.set.*mkhash.*\.vermagic/ i\cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic' "$KERNEL_DEFAULTS_FILE"
+                  sed -i '/grep.*\.config\.set.*mkhash.*\.vermagic/ s/^/# /' "$KERNEL_DEFAULTS_FILE"
+                fi
+             fi
+            fi
           fi
-        fi
-        
-        echo "======================================"
-        echo "验证修改结果..."
-        
-        # 显示修改后的相关内容
-        echo "修改后包含 .vermagic 的行："
-        grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" | head -5
-        
-        # 最终验证
-        if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+  
+          echo "修改后的相关行:"
+          grep -A2 -B2 "\.vermagic" "$KERNEL_DEFAULTS_FILE"
           echo "======================================"
-          echo "✅ 内核编译脚本修改成功"
+          echo "内核编译脚本修改完成"
           echo "======================================"
+  
         else
-          echo "======================================"
-          echo "❌ 内核编译脚本修改失败"
-          echo "恢复原始文件..."
-          cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
-          echo "======================================"
+          echo "❌ 错误：未找到包含 .vermagic 的行"
+          echo "文件内容预览（相关部分）:"
+          grep -A10 -B10 "config\.set" "$KERNEL_DEFAULTS_FILE" || echo "无法找到相关配置"
           exit 1
         fi
-        
-        # 清理临时文件
-        rm -f /tmp/fix_vermagic.py
-        SHELL_SCRIPT
     
     - name: 加载自定义feeds和执行脚本Part1
       if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
