@@ -376,28 +376,19 @@ jobs:
         cp "$KERNEL_DEFAULTS_FILE" "${KERNEL_DEFAULTS_FILE}.backup"
         
         # 查找并替换 vermagic 生成行
-        if grep -q "\.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+        if grep -q "grep.*mkhash md5 > \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
           echo "找到的原始行:"
-          grep "\.vermagic" "$KERNEL_DEFAULTS_FILE"
+          grep "grep.*mkhash md5 > \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"
   
-          # 方法1：使用 perl 进行精确替换（更可靠）
-          perl -i -pe "s|grep '=\\[ym\\]' \\$\(LINUX_DIR\)/.config.set \\| LC_ALL=C sort \\| \\$\(MKHASH\) md5 > \\$\(LINUX_DIR\)/.vermagic|cp \\$\(TOPDIR\)/.vermagic \\$\(LINUX_DIR\)/.vermagic|" "$KERNEL_DEFAULTS_FILE"
+          # 直接替换整行
+          sed -i '/grep.*mkhash md5 > \$(LINUX_DIR)\/.vermagic/c\\tcp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic' "$KERNEL_DEFAULTS_FILE"
   
-          # 检查是否替换成功
-          if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
-            echo "✅ 已修改内核 vermagic 生成方式"
-          else
-            echo "❌ perl 替换失败，尝试方法2"
-    
-           # 方法2：使用 awk 进行行替换
-            awk '/grep.*mkhash md5 > \$(LINUX_DIR)\/\.vermagic/ {print "\tcp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic"; next} {print}' "$KERNEL_DEFAULTS_FILE" > "$KERNEL_DEFAULTS_FILE.tmp" && mv "$KERNEL_DEFAULTS_FILE.tmp" "$KERNEL_DEFAULTS_FILE"
-          fi
-  
+          echo "✅ 已修改内核 vermagic 生成方式"
           echo "修改后的相关行:"
           grep -A2 -B2 "\.vermagic" "$KERNEL_DEFAULTS_FILE"
         else
           echo "❌ 错误：未找到 vermagic 相关配置行"
-          cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
+         cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
           exit 1
         fi
         
