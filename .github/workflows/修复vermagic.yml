@@ -270,25 +270,6 @@ jobs:
         echo "克隆状态: ✅ 成功"
         echo "======================================"
 
-    - name: 加载设备配置文件
-      run: |
-        cd ImmortalWrt
-        echo "======================================"
-        echo "🔧 加载设备配置文件"
-        echo "======================================"
-        
-        if [ ! -f "${{ env.CONFIG_FILE }}" ]; then
-          echo "❌ 错误：未找到配置文件 ${{ env.CONFIG_FILE }}"
-          ls -la *.config 2>/dev/null || echo "当前目录没有找到任何 .config 文件"
-          exit 1
-        fi
-        
-        echo "使用配置文件: ${{ env.CONFIG_FILE }}"
-        cp ${{ env.CONFIG_FILE }} .config
-        
-        echo "配置文件内容预览:"
-        head -20 .config
-        echo "======================================"
 
     - name: 获取官方 vermagic 值
       if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' }}
