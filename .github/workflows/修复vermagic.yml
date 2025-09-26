@@ -1,0 +1,606 @@
+name: 修复 vermagic
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      REPO_VERSION:
+        description: '选择 ImmortalWrt 版本 (格式: 24.10.2 或分支名)'
+        required: true
+        default: '24.10.2'
+        type: string
+      DEVICE_MODEL:
+        description: '选择配置文件'
+        required: true
+        default: 'rax3000m'
+        type: choice
+        options:
+          - rax3000m
+          - ax6000
+      LAN_IP:
+        description: '设置LAN IP地址'
+        required: true
+        default: '192.168.1.1'
+      FIX_VERMAGIC:
+        description: '修复 vermagic 以兼容官方软件源'
+        required: false
+        default: true
+        type: boolean
+      RUN_PART1:
+        description: '执行 Part1 脚本'
+        required: false
+        default: true
+        type: boolean
+      RUN_PART2:
+        description: '执行 Part2 脚本'
+        required: false
+        default: false
+        type: boolean
+      UPLOAD_BIN_DIR:
+        description: '上传bin目录'
+        required: false
+        default: false
+        type: boolean
+      UPLOAD_FIRMWARE:
+        description: '上传固件到Artifacts'
+        required: false
+        default: true
+        type: boolean
+      UPLOAD_RELEASE:
+        description: '发布固件到Release'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  FEEDS_CONF: feeds.conf.default
+  DIY_P1_SH: part1.sh
+  DIY_P2_SH: part2.sh
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    permissions:
+      contents: write
+    
+    steps:
+    - name: 检查项目分支
+      uses: actions/checkout@main
+
+    - name: 设置版本变量
+      run: |
+        if [ -z "${{ github.event.inputs.REPO_VERSION }}" ]; then
+          echo "❌ 错误：未指定版本信息"
+          echo "请在工作流运行时指定 ImmortalWrt 版本（tag或branch）"
+          exit 1
+        fi
+        
+        REPO_VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        echo "REPO_VERSION=$REPO_VERSION" >> $GITHUB_ENV
+        
+        echo "======================================"
+        echo "用户指定的版本: $REPO_VERSION"
+        echo "源码仓库: $REPO_URL"
+        echo "======================================"
+        
+    - name: 设置设备变量
+      run: |
+        DEVICE_MODEL="${{ github.event.inputs.DEVICE_MODEL }}"
+        if [ -z "$DEVICE_MODEL" ]; then
+          echo "❌ 错误：未指定设备型号"
+          echo "请在工作流运行时选择设备型号"
+          exit 1
+        fi
+        
+        echo "DEVICE_MODEL=$DEVICE_MODEL" >> $GITHUB_ENV
+        echo "CONFIG_FILE=${DEVICE_MODEL}.config" >> $GITHUB_ENV
+        
+        case "$DEVICE_MODEL" in
+          "rax3000m")
+            echo "DEVICE_NAME=cmcc_rax3000m" >> $GITHUB_ENV
+            echo "DEVICE_FULL_NAME=CMCC-RAX3000M" >> $GITHUB_ENV
+            echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+            ;;
+          "ax6000")
+            echo "DEVICE_NAME=jdcloud_re-cp-03" >> $GITHUB_ENV
+            echo "DEVICE_FULL_NAME=JDCloud-AX6000" >> $GITHUB_ENV
+            echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+            ;;
+          *)
+            echo "❌ 错误：不支持的设备型号: $DEVICE_MODEL"
+            exit 1
+            ;;
+        esac
+        
+        echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+        echo "======================================"
+        echo "设备型号: $DEVICE_MODEL"
+        echo "配置文件: ${DEVICE_MODEL}.config"
+        echo "======================================"
+
+    - name: 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install -y \
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
+          mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
+          libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
+          vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        echo "======================================"
+        echo "编译环境初始化完成"
+        echo "======================================"
+
+    - name: 清理磁盘空间
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: 下载源码
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        echo "正在克隆 ImmortalWrt 源码..."
+        echo "仓库: $REPO_URL"
+        echo "版本: $REPO_VERSION"
+        
+        echo "======================================"
+        echo "检测版本类型..."
+        
+        if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$REPO_VERSION$"; then
+          echo "✅ 检测到 Tag: $REPO_VERSION"
+          echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
+          
+          if ! git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt; then
+            echo "❌ 错误：无法克隆 tag '$REPO_VERSION'"
+            echo "请检查 tag 是否存在"
+            exit 1
+          fi
+          
+          VERSION_TYPE="Tag"
+          
+        elif [[ "$REPO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+          VERSION_WITH_V="v$REPO_VERSION"
+          echo "检测到版本号格式，尝试添加 v 前缀: $VERSION_WITH_V"
+          
+          if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$VERSION_WITH_V$"; then
+            echo "✅ 检测到 Tag: $VERSION_WITH_V"
+            echo "执行命令: git clone --depth 1 $REPO_URL -b $VERSION_WITH_V ImmortalWrt"
+            
+            if ! git clone --depth 1 "$REPO_URL" -b "$VERSION_WITH_V" ImmortalWrt; then
+              echo "❌ 错误：无法克隆 tag '$VERSION_WITH_V'"
+              echo "请检查 tag 是否存在"
+              exit 1
+            fi
+            
+            VERSION_TYPE="Tag"
+            REPO_VERSION="$VERSION_WITH_V"
+            echo "REPO_VERSION=$REPO_VERSION" >> $GITHUB_ENV
+            
+          else
+            if git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
+              echo "✅ 检测到 Branch: $REPO_VERSION"
+              echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
+              
+              if ! git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt; then
+                echo "❌ 错误：无法克隆分支 '$REPO_VERSION'"
+                echo "请检查分支是否存在"
+                exit 1
+              fi
+              
+              VERSION_TYPE="Branch"
+            else
+              echo "❌ 错误：'$REPO_VERSION' 和 '$VERSION_WITH_V' 都不是有效的 tag 或 branch"
+              echo ""
+              echo "可用的 Tags（最近10个）："
+              git ls-remote --tags "$REPO_URL" | tail -10 | awk '{print "  - " $2}' | sed 's|refs/tags/||'
+              echo ""
+              echo "可用的 Branches："
+              git ls-remote --heads "$REPO_URL" | awk '{print "  - " $2}' | sed 's|refs/heads/||'
+              exit 1
+            fi
+          fi
+          
+        elif git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
+          echo "✅ 检测到 Branch: $REPO_VERSION"
+          echo "执行命令: git clone --depth 1 $REPO_URL -b $REPO_VERSION ImmortalWrt"
+          
+          if ! git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt; then
+            echo "❌ 错误：无法克隆分支 '$REPO_VERSION'"
+            echo "请检查分支是否存在"
+            exit 1
+          fi
+          
+          VERSION_TYPE="Branch"
+          
+        else
+          echo "❌ 错误：'$REPO_VERSION' 既不是有效的 tag 也不是有效的 branch"
+          echo ""
+          echo "可用的 Tags（最近10个）："
+          git ls-remote --tags "$REPO_URL" | tail -10 | awk '{print "  - " $2}' | sed 's|refs/tags/||'
+          echo ""
+          echo "可用的 Branches："
+          git ls-remote --heads "$REPO_URL" | awk '{print "  - " $2}' | sed 's|refs/heads/||'
+          exit 1
+        fi
+        
+        ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
+        cd ImmortalWrt
+        
+        echo "======================================"
+        echo "ImmortalWrt 源码信息:"
+        echo "版本类型: $VERSION_TYPE"
+        echo "版本名称: $REPO_VERSION"
+        echo "当前HEAD: $(git rev-parse --short HEAD)"
+        echo "最新提交: $(git log --oneline -1)"
+        
+        if [ -f "include/version.mk" ]; then
+          VERSION_NUMBER=$(grep 'VERSION_NUMBER' include/version.mk | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
+          echo "版本号: $VERSION_NUMBER"
+        fi
+        
+        if [ -f "Makefile" ]; then
+          VERSION=$(grep '^VERSION' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
+          PATCHLEVEL=$(grep '^PATCHLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
+          SUBLEVEL=$(grep '^SUBLEVEL' Makefile | head -1 | cut -d'=' -f2 | tr -d ' ' || echo "未找到")
+          if [ "$VERSION" != "未找到" ]; then
+            echo "ImmortalWrt 版本: $VERSION.$PATCHLEVEL.$SUBLEVEL"
+          fi
+        fi
+        
+        echo "克隆状态: ✅ 成功"
+        echo "======================================"
+
+    - name: 获取官方 vermagic 值
+      if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' }}
+      run: |
+        echo "======================================"
+        echo "🔍 开始获取官方 vermagic 值"
+        echo "======================================"
+        
+        cd ImmortalWrt
+        
+        VERSION="${{ github.event.inputs.REPO_VERSION }}"
+        TARGET_NAME="${{ env.TARGET_NAME }}"
+        
+        # 移除版本号中的 'v' 前缀（如果存在）
+        CLEAN_VERSION=$(echo "$VERSION" | sed 's/^v//')
+        
+        # 构建官方 manifest URL
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$CLEAN_VERSION/targets/$TARGET_NAME/immortalwrt-$CLEAN_VERSION-$TARGET_NAME.manifest"
+        echo "官方 manifest URL: $OFFICIAL_MANIFEST_URL"
+        
+        # 下载 manifest 文件
+        if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+          echo "✅ 官方 manifest 下载成功"
+          
+          # 提取 kernel 包信息
+          KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
+          if [ -n "$KERNEL_LINE" ]; then
+            echo "提取到的 kernel 行: $KERNEL_LINE"
+            
+            # 解析出 vermagic 值（通常是版本号后的第一个字段）
+            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk '{print $3}')
+            echo "解析出的官方 vermagic: $OFFICIAL_VERMAGIC"
+            
+            if [ -n "$OFFICIAL_VERMAGIC" ]; then
+              # 在源码根目录创建 .vermagic 文件
+              echo "$OFFICIAL_VERMAGIC" > .vermagic
+              echo "✅ 官方 vermagic 值已写入 .vermagic 文件"
+              echo "OFFICIAL_VERMAGIC=$OFFICIAL_VERMAGIC" >> $GITHUB_ENV
+              echo "VERMAGIC_STATUS=✅ 已获取" >> $GITHUB_ENV
+            else
+              echo "❌ 无法解析 vermagic 值"
+              echo "VERMAGIC_STATUS=❌ 解析失败" >> $GITHUB_ENV
+            fi
+          else
+            echo "❌ 在 manifest 中未找到 kernel 包信息"
+            echo "VERMAGIC_STATUS=❌ 未找到kernel信息" >> $GITHUB_ENV
+          fi
+        else
+          echo "❌ 官方 manifest 下载失败，尝试备用方案..."
+          
+          # 备用方案：尝试从已存在的固件中提取
+          # 这里可以添加其他获取 vermagic 的方法
+          echo "VERMAGIC_STATUS=❌ 下载失败" >> $GITHUB_ENV
+        fi
+        
+        echo "======================================"
+
+    - name: 修改内核编译脚本以使用固定 vermagic
+      if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' && env.VERMAGIC_STATUS == '✅ 已获取' }}
+      run: |
+        echo "======================================"
+        echo "🔧 修改内核编译脚本"
+        echo "======================================"
+        
+        cd ImmortalWrt
+        
+        # 检查 .vermagic 文件是否存在
+        if [ ! -f ".vermagic" ]; then
+          echo "❌ 错误：.vermagic 文件不存在"
+          exit 1
+        fi
+        
+        echo "当前目录的 .vermagic 内容:"
+        cat .vermagic
+        
+        # 查找并修改 kernel-defaults.mk 文件
+        KERNEL_DEFAULTS_FILE="include/kernel-defaults.mk"
+        
+        if [ ! -f "$KERNEL_DEFAULTS_FILE" ]; then
+          echo "❌ 错误：未找到 $KERNEL_DEFAULTS_FILE"
+          exit 1
+        fi
+        
+        # 备份原文件
+        cp "$KERNEL_DEFAULTS_FILE" "${KERNEL_DEFAULTS_FILE}.backup"
+        
+        # 查找并替换 vermagic 生成行
+        if grep -q "\.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+          # 找到生成 .vermagic 的行并替换
+          sed -i 's|grep.*mkhash md5 >.*\.vermagic|cp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic|' "$KERNEL_DEFAULTS_FILE"
+          echo "✅ 已修改内核 vermagic 生成方式"
+          
+          # 显示修改内容
+          echo "修改后的相关行:"
+          grep -A2 -B2 "\.vermagic" "$KERNEL_DEFAULTS_FILE"
+        else
+          echo "❌ 错误：未找到 vermagic 相关配置行"
+          # 恢复备份
+          cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
+          exit 1
+        fi
+        
+        echo "======================================"
+        echo "内核编译脚本修改完成"
+        echo "======================================"
+
+    - name: 加载自定义feeds和执行脚本Part1
+      if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF ImmortalWrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd ImmortalWrt
+        echo "======================================"
+        echo "执行自定义脚本 Part1..."
+        echo "======================================"
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: 更新并安装feeds
+      run: |
+        cd ImmortalWrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        echo "Feeds 更新安装完成"
+
+    - name: 加载设备配置和执行脚本Part2
+      if: ${{ github.event.inputs.RUN_PART2 == 'true' }}
+      run: |
+        if [ ! -f "${{ env.CONFIG_FILE }}" ]; then
+          echo "❌ 错误：未找到配置文件 ${{ env.CONFIG_FILE }}"
+          echo "请确保项目根目录存在该配置文件"
+          ls -la *.config 2>/dev/null || echo "当前目录没有找到任何 .config 文件"
+          exit 1
+        fi
+        
+        echo "使用配置文件: ${{ env.CONFIG_FILE }}"
+        cp ${{ env.CONFIG_FILE }} ImmortalWrt/.config
+        
+        chmod +x $DIY_P2_SH
+        cd ImmortalWrt
+        echo "======================================"
+        echo "执行自定义脚本 Part2..."
+        echo "======================================"
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: 设置LAN IP地址
+      run: |
+        cd ImmortalWrt
+        SET_IP="${{ github.event.inputs.LAN_IP }}"
+        
+        if [ -z "$SET_IP" ]; then
+          echo "❌ 错误：未指定LAN IP地址"
+          echo "请在工作流运行时设置LAN IP地址"
+          exit 1
+        fi
+        
+        if ! [[ $SET_IP =~ ^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; then
+            echo "❌ 错误：IP地址格式无效: $SET_IP"
+            echo "请输入有效的IPv4地址，如: 192.168.1.1"
+            exit 1
+        fi
+        
+        sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" package/base-files/files/bin/config_generate
+        
+        if [ -d "feeds/luci/modules/luci-mod-system" ]; then
+          find feeds/luci/modules/luci-mod-system -type f -name "flash.js" -exec sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" {} + 2>/dev/null || true
+        fi
+        
+        echo "IP_ADDR=$SET_IP" >> $GITHUB_ENV
+        echo "======================================"
+        echo "LAN IP 地址设置为: $SET_IP"
+        echo "======================================"
+
+    - name: 下载软件包
+      id: package
+      run: |
+        cd ImmortalWrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+        echo "======================================"
+        echo "软件包下载完成"
+        echo "======================================"
+
+    - name: 编译固件
+      id: compile
+      run: |
+        cd ImmortalWrt
+        echo -e "$(nproc) 线程编译"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "======================================"
+        echo "固件编译完成"
+        echo "======================================"
+
+    - name: 检查磁盘使用情况
+      if: (!cancelled())
+      run: df -hT
+
+    - name: 上传bin目录
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && github.event.inputs.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: ImmortalWrt_bin_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        path: ImmortalWrt/bin
+
+    - name: 整理固件文件
+      id: organize
+      if: github.event.inputs.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd ImmortalWrt/bin/targets/*/*
+        rm -rf packages
+        for file in *; do
+          if [[ -f "$file" ]]; then
+            new_name="${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-${file#*${{ env.DEVICE_NAME }}-}"
+            mv "$file" "$new_name" 2>/dev/null || mv "$file" "${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-$file"
+          fi
+        done
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "======================================"
+        echo "固件整理完成，文件列表："
+        ls -lh
+        echo "======================================"
+
+    - name: 验证 vermagic 修改效果
+      run: |
+        echo "======================================"
+        echo "🔍 验证 vermagic 修改效果"
+        echo "======================================"
+        
+        cd ImmortalWrt
+        
+        # 获取本地编译的固件 vermagic
+        LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
+        if [ -n "$LOCAL_MANIFEST" ]; then
+          LOCAL_VERMAGIC=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
+          echo "本地编译 vermagic: ${LOCAL_VERMAGIC:-获取失败}"
+          echo "LOCAL_VERMAGIC=$LOCAL_VERMAGIC" >> $GITHUB_ENV
+        else
+          echo "本地编译 vermagic: 获取失败"
+          echo "LOCAL_VERMAGIC=获取失败" >> $GITHUB_ENV
+        fi
+        
+        # vermagic 对比
+        echo "======================================"
+        if [ -n "$OFFICIAL_VERMAGIC" ] && [ "$OFFICIAL_VERMAGIC" != "获取失败" ] && [ -n "$LOCAL_VERMAGIC" ] && [ "$LOCAL_VERMAGIC" != "获取失败" ]; then
+          if [ "$OFFICIAL_VERMAGIC" = "$LOCAL_VERMAGIC" ]; then
+            echo "✅ vermagic 对比结果: 完全一致"
+            echo "固件已兼容官方软件源"
+            echo "VERMAGIC_COMPARE=✅ 一致" >> $GITHUB_ENV
+          else
+            echo "❌ vermagic 对比结果: 不一致"
+            echo "官方: $OFFICIAL_VERMAGIC"
+            echo "本地: $LOCAL_VERMAGIC"
+            echo "VERMAGIC_COMPARE=❌ 不一致" >> $GITHUB_ENV
+          fi
+        else
+          echo "⚠️ vermagic 对比结果: 无法对比（数据不完整）"
+          echo "VERMAGIC_COMPARE=⚠️ 无法对比" >> $GITHUB_ENV
+        fi
+        echo "======================================"
+
+    - name: 上传固件到Artifacts
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && github.event.inputs.UPLOAD_FIRMWARE == 'true'
+      with:
+        name: ${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-Firmware
+        path: ${{ env.FIRMWARE }}
+
+    - name: 生成发布标签
+      id: tag
+      if: github.event.inputs.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+        echo "release_tag=${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
+        
+        # 生成发布说明
+        cat > release.txt <<EOF
+        # ${{ env.DEVICE_FULL_NAME }} 固件
+        
+        ## 📋 固件信息
+        
+        - **设备型号**: ${{ env.DEVICE_FULL_NAME }}
+        - **目标平台**: ${{ env.TARGET_NAME }}
+        - **编译时间**: ${{ env.FILE_DATE }}
+        - **登录地址**: ${{ env.IP_ADDR }}
+        - **默认密码**: 无密码或 password
+        
+        ## 📦 源码信息
+        
+        - **源码仓库**: ${{ env.REPO_URL }}
+        - **源码版本**: ${{ env.REPO_VERSION }}
+        
+        ## 🔧 vermagic 信息
+        
+        - **官方 vermagic**: ${{ env.OFFICIAL_VERMAGIC }}
+        - **本地 vermagic**: ${{ env.LOCAL_VERMAGIC }}
+        - **对比结果**: ${{ env.VERMAGIC_COMPARE }}
+        - **软件源兼容**: ${{ env.VERMAGIC_COMPARE == '✅ 一致' && '✅ 兼容官方软件源' || '❌ 不兼容官方软件源' }}
+        
+        ---
+        
+        ## ℹ️ 注意事项
+        
+        ${{ env.VERMAGIC_COMPARE == '✅ 一致' && '✅ 此固件可以使用 ImmortalWrt 官方软件源安装额外软件包' || '⚠️ 此固件可能无法直接使用官方软件源，请谨慎安装内核相关软件包' }}
+        EOF
+
+    - name: 发布固件到Release
+      uses: softprops/action-gh-release@v2.1.0
+      if: steps.tag.outputs.status == 'success' && github.event.inputs.UPLOAD_RELEASE == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ env.FIRMWARE }}/*
+        name: ${{ env.DEVICE_FULL_NAME }} - ${{ env.FILE_DATE }}
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        draft: false
+        prerelease: false
+
+    - name: 删除旧的workflow运行记录
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 7
+        keep_minimum_runs: 10
+
+    - name: 删除旧的Releases
+      uses: dev-drprasad/delete-older-releases@v0.3.2
+      if: github.event.inputs.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 10
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
