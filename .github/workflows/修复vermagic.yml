@@ -563,8 +563,10 @@ jobs:
         # 获取本地编译的固件 vermagic（使用原来的ABI验证逻辑）
         LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
         if [ -n "$LOCAL_MANIFEST" ]; then
-          LOCAL_VERMAGIC=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
-          echo "本地编译 vermagic: ${LOCAL_VERMAGIC:-获取失败}"
+          LOCAL_VERMAGICA=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
+          echo "本地编译 kernel 行: ${LOCAL_VERMAGICA:-获取失败}"
+          LOCAL_VERMAGIC=$(echo "$LOCAL_VERMAGICA" | awk -F'~' '{print $2}')
+          echo "提取到的 vermagic: ${LOCAL_VERMAGIC:-获取失败}"
           echo "LOCAL_VERMAGIC=$LOCAL_VERMAGIC" >> $GITHUB_ENV
         else
           echo "本地编译 vermagic: 获取失败"
