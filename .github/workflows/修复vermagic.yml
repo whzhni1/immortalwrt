@@ -281,47 +281,68 @@ jobs:
         
         VERSION="${{ github.event.inputs.REPO_VERSION }}"
         TARGET_NAME="${{ env.TARGET_NAME }}"
+        TARGET_PATH=$(echo "$TARGET_NAME" | tr '-' '/')
         
         # 移除版本号中的 'v' 前缀（如果存在）
         CLEAN_VERSION=$(echo "$VERSION" | sed 's/^v//')
         
-        # 构建官方 manifest URL
-        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$CLEAN_VERSION/targets/$TARGET_NAME/immortalwrt-$CLEAN_VERSION-$TARGET_NAME.manifest"
+        # 构建官方 manifest URL - 使用您原来的正确格式
+        OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$CLEAN_VERSION/targets/$TARGET_PATH/immortalwrt-$CLEAN_VERSION-$TARGET_NAME.manifest"
         echo "官方 manifest URL: $OFFICIAL_MANIFEST_URL"
         
-        # 下载 manifest 文件
+        # 下载 manifest 文件（使用您原来的方法）
         if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
           echo "✅ 官方 manifest 下载成功"
+          echo "------ manifest 前10行 ------"
+          head -10 official.manifest
+          echo "-----------------------------"
           
-          # 提取 kernel 包信息
+          # 提取 kernel 行（使用您原来的方法）
           KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
-          if [ -n "$KERNEL_LINE" ]; then
-            echo "提取到的 kernel 行: $KERNEL_LINE"
-            
-            # 解析出 vermagic 值（通常是版本号后的第一个字段）
+          echo "提取到的 kernel 行: $KERNEL_LINE"
+          
+          # 解析出 vermagic 值（ABI值）
+          OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk '{print $3}')
+          echo "解析出的官方 vermagic: $OFFICIAL_VERMAGIC"
+          
+          if [ -n "$OFFICIAL_VERMAGIC" ]; then
+            # 在源码根目录创建 .vermagic 文件
+            echo "$OFFICIAL_VERMAGIC" > .vermagic
+            echo "✅ 官方 vermagic 值已写入 .vermagic 文件"
+            echo "文件内容: $(cat .vermagic)"
+            echo "OFFICIAL_VERMAGIC=$OFFICIAL_VERMAGIC" >> $GITHUB_ENV
+            echo "VERMAGIC_STATUS=✅ 已获取" >> $GITHUB_ENV
+          else
+            echo "❌ 无法解析 vermagic 值"
+            echo "VERMAGIC_STATUS=❌ 解析失败" >> $GITHUB_ENV
+          fi
+        else
+          echo "❌ 官方 manifest 下载失败"
+          echo "尝试备用URL..."
+          
+          # 备用方案：尝试不带设备名的manifest
+          OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$CLEAN_VERSION/targets/$TARGET_PATH/immortalwrt-$CLEAN_VERSION-$TARGET_NAME.manifest"
+          echo "备用URL: $OFFICIAL_MANIFEST_URL"
+          
+          if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
+            echo "✅ 备用 manifest 下载成功"
+            KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
             OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk '{print $3}')
             echo "解析出的官方 vermagic: $OFFICIAL_VERMAGIC"
             
             if [ -n "$OFFICIAL_VERMAGIC" ]; then
-              # 在源码根目录创建 .vermagic 文件
               echo "$OFFICIAL_VERMAGIC" > .vermagic
               echo "✅ 官方 vermagic 值已写入 .vermagic 文件"
               echo "OFFICIAL_VERMAGIC=$OFFICIAL_VERMAGIC" >> $GITHUB_ENV
               echo "VERMAGIC_STATUS=✅ 已获取" >> $GITHUB_ENV
             else
-              echo "❌ 无法解析 vermagic 值"
+              echo "❌ 备用方案也无法解析 vermagic 值"
               echo "VERMAGIC_STATUS=❌ 解析失败" >> $GITHUB_ENV
             fi
           else
-            echo "❌ 在 manifest 中未找到 kernel 包信息"
-            echo "VERMAGIC_STATUS=❌ 未找到kernel信息" >> $GITHUB_ENV
+            echo "❌ 所有 manifest 下载尝试都失败"
+            echo "VERMAGIC_STATUS=❌ 下载失败" >> $GITHUB_ENV
           fi
-        else
-          echo "❌ 官方 manifest 下载失败，尝试备用方案..."
-          
-          # 备用方案：尝试从已存在的固件中提取
-          # 这里可以添加其他获取 vermagic 的方法
-          echo "VERMAGIC_STATUS=❌ 下载失败" >> $GITHUB_ENV
         fi
         
         echo "======================================"
@@ -341,8 +362,7 @@ jobs:
           exit 1
         fi
         
-        echo "当前目录的 .vermagic 内容:"
-        cat .vermagic
+        echo "当前目录的 .vermagic 内容: $(cat .vermagic)"
         
         # 查找并修改 kernel-defaults.mk 文件
         KERNEL_DEFAULTS_FILE="include/kernel-defaults.mk"
@@ -502,7 +522,7 @@ jobs:
         
         cd ImmortalWrt
         
-        # 获取本地编译的固件 vermagic
+        # 获取本地编译的固件 vermagic（使用原来的ABI验证逻辑）
         LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
         if [ -n "$LOCAL_MANIFEST" ]; then
           LOCAL_VERMAGIC=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
