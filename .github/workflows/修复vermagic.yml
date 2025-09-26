@@ -302,7 +302,7 @@ jobs:
           echo "提取到的 kernel 行: $KERNEL_LINE"
           
           # 解析出 vermagic 值（ABI值）
-          OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk '{print $3}')
+          OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk -F'~' '{print $2}')
           echo "解析出的官方 vermagic: $OFFICIAL_VERMAGIC"
           
           if [ -n "$OFFICIAL_VERMAGIC" ]; then
