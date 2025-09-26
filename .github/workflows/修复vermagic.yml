@@ -350,6 +350,7 @@ jobs:
     - name: 修改内核编译脚本以使用固定 vermagic
       if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' && env.VERMAGIC_STATUS == '✅ 已获取' }}
       run: |
+        cat << 'SHELL_SCRIPT' | bash
         echo "======================================"
         echo "🔧 修改内核编译脚本"
         echo "======================================"
@@ -382,70 +383,67 @@ jobs:
         echo "文件中所有包含 .vermagic 的行："
         grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" || echo "未找到包含 .vermagic 的行"
         
-        # 使用 Python 来处理，避免 shell 转义问题
-        python3 << 'PYTHON_SCRIPT'
-import re
-import os
-import sys
-
-kernel_file = "include/kernel-defaults.mk"
-
-try:
-    # 读取文件
-    with open(kernel_file, 'r') as f:
-        lines = f.readlines()
-    
-    # 查找目标行
-    target_line_index = -1
-    original_line = ""
-    
-    for i, line in enumerate(lines):
-        # 匹配包含 grep '=[ym]' 和 .vermagic 的行
-        if ("grep" in line and "=[ym]" in line and ".vermagic" in line) or \
-           ("grep" in line and "=\```math
-ym\```" in line and ".vermagic" in line) or \
-           (".config.set" in line and ".vermagic" in line and "md5" in line):
-            target_line_index = i
-            original_line = line
-            print(f"找到目标行 (第{i+1}行): {line.strip()}")
-            break
-    
-    if target_line_index == -1:
-        # 尝试更宽松的匹配
-        for i, line in enumerate(lines):
-            if ".vermagic" in line and ">" in line and "LINUX_DIR" in line:
-                target_line_index = i
-                original_line = line
-                print(f"找到目标行 (宽松匹配，第{i+1}行): {line.strip()}")
-                break
-    
-    if target_line_index != -1:
-        # 获取原始缩进
-        indent = len(original_line) - len(original_line.lstrip())
-        indent_str = original_line[:indent]
+        # 创建 Python 脚本文件
+        cat > /tmp/fix_vermagic.py << 'EOF'
+        import re
+        import sys
         
-        # 替换为新行
-        new_line = f"{indent_str}cp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic\n"
-        lines[target_line_index] = new_line
+        kernel_file = "include/kernel-defaults.mk"
         
-        # 写回文件
-        with open(kernel_file, 'w') as f:
-            f.writelines(lines)
+        try:
+            # 读取文件
+            with open(kernel_file, 'r') as f:
+                lines = f.readlines()
+            
+            # 查找目标行
+            target_line_index = -1
+            original_line = ""
+            
+            for i, line in enumerate(lines):
+                # 匹配多种可能的格式
+                # 1. grep '=[ym]' ... > $(LINUX_DIR)/.vermagic
+                # 2. grep '=```math
+ym```' ... > $(LINUX_DIR)/.vermagic  
+                # 3. .config.set | ... | md5 > $(LINUX_DIR)/.vermagic
+                if ".vermagic" in line and "$(LINUX_DIR)" in line:
+                    if ("grep" in line and "ym" in line) or \
+                       (".config.set" in line) or \
+                       ("md5" in line and ">" in line):
+                        target_line_index = i
+                        original_line = line
+                        print(f"找到目标行 (第{i+1}行): {line.strip()}")
+                        break
+            
+            if target_line_index != -1:
+                # 获取原始缩进
+                indent = len(original_line) - len(original_line.lstrip())
+                indent_str = original_line[:indent]
+                
+                # 替换为新行
+                new_line = f"{indent_str}cp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic\n"
+                lines[target_line_index] = new_line
+                
+                # 写回文件
+                with open(kernel_file, 'w') as f:
+                    f.writelines(lines)
+                
+                print(f"✅ 成功替换第 {target_line_index + 1} 行")
+                print(f"新内容: {new_line.strip()}")
+                sys.exit(0)
+            else:
+                print("❌ 未找到目标行")
+                sys.exit(1)
+                
+        except Exception as e:
+            print(f"❌ 处理失败: {e}")
+            sys.exit(1)
+        EOF
         
-        print(f"✅ 成功替换第 {target_line_index + 1} 行")
-        print(f"新内容: {new_line.strip()}")
-        sys.exit(0)
-    else:
-        print("❌ 未找到目标行")
-        sys.exit(1)
+        # 执行 Python 脚本
+        python3 /tmp/fix_vermagic.py
+        PYTHON_EXIT_CODE=$?
         
-except Exception as e:
-    print(f"❌ 处理失败: {e}")
-    sys.exit(1)
-PYTHON_SCRIPT
-        
-        # 检查 Python 脚本的退出状态
-        if [ $? -eq 0 ]; then
+        if [ $PYTHON_EXIT_CODE -eq 0 ]; then
           echo "✅ Python 脚本执行成功"
         else
           echo "❌ Python 脚本执行失败，尝试备用方案..."
@@ -453,52 +451,17 @@ PYTHON_SCRIPT
           # 恢复备份
           cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
           
-          # 备用方案：使用 sed 直接处理
-          # 先找到行号
-          LINE_NUM=$(grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" | grep -E "(grep|MKHASH|config\.set)" | head -1 | cut -d: -f1)
+          # 备用方案：直接查找并替换
+          # 获取包含 .vermagic 且包含 > 符号的行号
+          LINE_NUM=$(grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" | grep ">" | head -1 | cut -d: -f1)
           
           if [ -n "$LINE_NUM" ]; then
             echo "找到目标在第 $LINE_NUM 行"
             
-            # 获取该行内容
-            ORIGINAL_LINE=$(sed -n "${LINE_NUM}p" "$KERNEL_DEFAULTS_FILE")
-            echo "原始行: $ORIGINAL_LINE"
-            
-            # 获取缩进
-            INDENT=$(echo "$ORIGINAL_LINE" | sed 's/[^ \t].*//')
-            
-            # 删除原行并插入新行
-            sed -i "${LINE_NUM}d" "$KERNEL_DEFAULTS_FILE"
-            sed -i "${LINE_NUM}i\\${INDENT}cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"
+            # 使用 sed 替换该行
+            sed -i "${LINE_NUM}s/.*/\tcp \$(TOPDIR)\/.vermagic \$(LINUX_DIR)\/.vermagic/" "$KERNEL_DEFAULTS_FILE"
             
             echo "✅ 使用 sed 替换完成"
-          else
-            echo "❌ 无法找到目标行，尝试最后的方法..."
-            
-            # 最后的尝试：直接在文件末尾查找并替换
-            # 使用 awk 处理整个文件
-            awk '
-            {
-              if (index($0, ".vermagic") > 0 && index($0, ">") > 0) {
-                # 找到了目标行
-                match($0, /^[ \t]*/)
-                indent = substr($0, RSTART, RLENGTH)
-                print indent "cp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic"
-                found = 1
-              } else {
-                print $0
-              }
-            }
-            END {
-              if (!found) {
-                print "# Warning: vermagic line not found, adding at end"
-                print "\tcp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic"
-              }
-            }
-            ' "$KERNEL_DEFAULTS_FILE" > "${KERNEL_DEFAULTS_FILE}.tmp"
-            
-            mv "${KERNEL_DEFAULTS_FILE}.tmp" "$KERNEL_DEFAULTS_FILE"
-            echo "✅ 使用 awk 处理完成"
           fi
         fi
         
@@ -514,13 +477,6 @@ PYTHON_SCRIPT
           echo "======================================"
           echo "✅ 内核编译脚本修改成功"
           echo "======================================"
-          
-          # 显示修改前后对比
-          echo "修改前后对比:"
-          echo "原始文件:"
-          grep "\.vermagic" "${KERNEL_DEFAULTS_FILE}.backup" | head -1 || echo "未找到"
-          echo "修改后:"
-          grep "cp \$(TOPDIR)/.vermagic" "$KERNEL_DEFAULTS_FILE" | head -1
         else
           echo "======================================"
           echo "❌ 内核编译脚本修改失败"
@@ -529,6 +485,10 @@ PYTHON_SCRIPT
           echo "======================================"
           exit 1
         fi
+        
+        # 清理临时文件
+        rm -f /tmp/fix_vermagic.py
+        SHELL_SCRIPT
     
     - name: 加载自定义feeds和执行脚本Part1
       if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
