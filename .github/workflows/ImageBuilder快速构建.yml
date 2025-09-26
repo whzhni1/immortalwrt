@@ -323,7 +323,8 @@ jobs:
         echo "$ALL_PACKAGES" | tr ' ' '\n' | sort | uniq
         echo "======================================"
 
-    - name: 构建固件
+    
+    - name: 构建固件（简化版）
       id: compile
       run: |
         cd ImmortalWrt
@@ -331,116 +332,44 @@ jobs:
         echo "🔨 开始构建固件（ImageBuilder模式）"
         echo "======================================"
         
-        # 检查ImageBuilder环境
-        echo "检查环境..."
-        if [ ! -f "Makefile" ]; then
-          echo "❌ 错误：Makefile不存在"
-          ls -la
-          exit 1
-        fi
+        # 方案1：使用ImageBuilder默认包
+        echo "使用默认配置构建..."
+        make image PROFILE="${{ env.DEVICE_PROFILE }}"
         
-        # 显示可用的Profile
-        echo "可用的设备Profile:"
-        make info | grep -A 100 "Profiles:" || true
-        
-        # 基础包列表（精简版）
-        BASE_PACKAGES="base-files busybox dropbear firewall4 fstools kmod-nft-offload libc libgcc libustream-mbedtls logd luci mtd netifd odhcp6c odhcpd-ipv6only opkg ppp ppp-mod-pppoe procd procd-seccomp procd-ujail uboot-envtools uci uclient-fetch urandom-seed urngd"
-        
-        # LuCI基础包
-        LUCI_PACKAGES="luci luci-base luci-mod-admin-full luci-theme-bootstrap luci-app-firewall luci-proto-ipv6 luci-proto-ppp"
-        
-        # 语言包
-        LANG_PACKAGES="luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn"
-        
-        # 自定义包（简化）
-        CUSTOM_PACKAGES="${{ github.event.inputs.PACKAGES_ADD }}"
-        
-        # 组合包列表
-        ALL_PACKAGES="$BASE_PACKAGES $LUCI_PACKAGES $LANG_PACKAGES $CUSTOM_PACKAGES"
-        
-        echo "======================================"
-        echo "构建参数:"
-        echo "Profile: ${{ env.DEVICE_PROFILE }}"
-        echo "软件包数量: $(echo $ALL_PACKAGES | wc -w)"
-        echo "======================================"
-        
-        # 首先尝试最小化构建
-        echo "尝试基础构建..."
-        if make image PROFILE="${{ env.DEVICE_PROFILE }}" PACKAGES="luci" FILES="files" 2>&1 | tee build.log; then
-          echo "✅ 基础构建成功"
-        else
-          echo "❌ 基础构建失败，查看错误："
-          tail -50 build.log
+        # 检查结果
+        if ls bin/targets/mediatek/filogic/*.bin >/dev/null 2>&1; then
+          echo "✅ 默认构建成功"
           
-          # 尝试无包构建
-          echo "尝试无包构建..."
-          if make image PROFILE="${{ env.DEVICE_PROFILE }}" PACKAGES="" FILES="files"; then
-            echo "✅ 无包构建成功"
+          # 如果默认构建成功，尝试添加自定义包
+          echo "尝试添加自定义包..."
+          
+          # 清理之前的构建
+          make clean
+          
+          # 只添加不会冲突的包
+          SAFE_PACKAGES="luci-theme-argon luci-app-ttyd luci-i18n-base-zh-cn"
+          
+          if make image PROFILE="${{ env.DEVICE_PROFILE }}" PACKAGES="$SAFE_PACKAGES" FILES="files"; then
+            echo "✅ 自定义构建成功"
           else
-            echo "❌ 无包构建也失败"
-            
-            # 显示更多调试信息
-            echo "检查.config文件："
-            if [ -f ".config" ]; then
-              tail -20 .config
-            fi
-            
-            echo "检查bin目录："
-            ls -la bin/ 2>/dev/null || echo "bin目录不存在"
-            
-            exit 1
+            echo "⚠️ 自定义构建失败，使用默认构建"
+            # 重新构建默认
+            make clean
+            make image PROFILE="${{ env.DEVICE_PROFILE }}"
           fi
-        fi
-        
-        # 如果基础构建成功，尝试完整构建
-        echo "尝试完整构建..."
-        make image \
-          PROFILE="${{ env.DEVICE_PROFILE }}" \
-          PACKAGES="$ALL_PACKAGES" \
-          FILES="files" || {
-            echo "⚠️ 完整构建失败，使用基础构建结果"
-          }
-        
-        # 检查构建结果
-        if [ -d "bin/targets" ]; then
+          
           echo "status=success" >> $GITHUB_OUTPUT
-          echo "======================================"
-          echo "✅ 固件构建完成"
-          echo "======================================"
           
-          # 显示构建结果
-          echo "构建产物:"
-          find bin/targets -type f KATEX_INLINE_OPEN -name "*.bin" -o -name "*.img.gz" KATEX_INLINE_CLOSE 2>/dev/null || echo "未找到固件文件"
-          
-          # 显示详细信息
-          echo "目录内容:"
-          ls -lah bin/targets/*/* 2>/dev/null || ls -lah bin/ 2>/dev/null
         else
-          echo "❌ 构建失败，未生成固件"
-          
-          # 显示可能的错误
-          if [ -f "build.log" ]; then
-            echo "构建日志最后50行:"
-            tail -50 build.log
-          fi
-          
+          echo "❌ 构建失败"
           exit 1
         fi
         
-        # 检查构建结果
-        if [ -d "bin/targets" ]; then
-          echo "status=success" >> $GITHUB_OUTPUT
-          echo "======================================"
-          echo "✅ 固件构建成功"
-          echo "======================================"
-          
-          # 显示构建结果
-          echo "构建产物:"
-          find bin/targets -type f KATEX_INLINE_OPEN -name "*.bin" -o -name "*.img.gz" KATEX_INLINE_CLOSE | head -10
-        else
-          echo "❌ 构建失败，未生成固件"
-          exit 1
-        fi
+        # 显示结果
+        echo "======================================"
+        echo "构建结果:"
+        ls -lah bin/targets/mediatek/filogic/
+        echo "======================================"
 
     - name: 检查磁盘使用情况
       if: (!cancelled())
