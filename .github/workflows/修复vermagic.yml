@@ -365,6 +365,20 @@ jobs:
           echo "❌ 错误：文件 $KERNEL_DEFAULTS_FILE 不存在"
           exit 1
         fi
+        echo "当前目录的 .vermagic 内容: $(cat .vermagic)"
+
+        # 正确设置文件路径
+        KERNEL_DEFAULTS_FILE="include/kernel-defaults.mk"
+        echo "查找文件: $KERNEL_DEFAULTS_FILE"
+
+        # 检查文件是否存在
+        if [ ! -f "$KERNEL_DEFAULTS_FILE" ]; then
+          echo "❌ 错误：文件 $KERNEL_DEFAULTS_FILE 不存在"
+          echo "当前目录: $(pwd)"
+          echo "文件列表:"
+          ls -la include/ | head -10
+         exit 1
+        fi
 
         # 使用更宽松的搜索条件
         if grep -q "\.vermagic" "$KERNEL_DEFAULTS_FILE"; then
