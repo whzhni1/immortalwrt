@@ -44,8 +44,22 @@ jobs:
             KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
             echo "提取到的 kernel 行: $KERNEL_LINE"
 
-            KERNEL_ABI=$(echo "$KERNEL_LINE" | awk -F'~' '{print $2}')
+            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
             echo "解析出的 ABI: $KERNEL_ABI"
+            #测试1
+            KERNEL_LINE="kernel - 5.15.189-1-dab81cfed92fb4881f7b4fec9f787850"
+            echo "测试1提取到的 kernel 行: $KERNEL_LINE"
+
+            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
+            echo "测试1解析出的 ABI: $KERNEL_ABI"
+
+            #测试2
+            KERNEL_LINE="kernel - 5.15.189-1-ac123796bjdindkalmfkse12769nxkd"
+            echo "测试1提取到的 kernel 行: $KERNEL_LINE"
+
+            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
+            echo "测试2解析出的 ABI: $KERNEL_ABI"
+            
           else
             echo "❌ 官方 manifest 下载失败"
             exit 1
