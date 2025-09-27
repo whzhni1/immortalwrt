@@ -291,6 +291,7 @@ jobs:
           # 提取 kernel 行（使用您原来的方法）
           KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
           echo "提取到的 kernel 行: $KERNEL_LINE"
+          echo "KERNEL_LINE=$KERNEL_LINE" >> $GITHUB_ENV
           
           # 解析出 vermagic 值（ABI值）
           OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
@@ -301,7 +302,7 @@ jobs:
             echo "$OFFICIAL_VERMAGIC" > .vermagic
             echo "✅ 官方 vermagic 值已写入 .vermagic 文件"
             echo "文件内容: $(cat .vermagic)"
-            echo "OFFICIAL_VERMAGIC=$OFFICIAL_VERMAGIC" >> $GITHUB_ENV
+            # echo "OFFICIAL_VERMAGIC=$OFFICIAL_VERMAGIC" >> $GITHUB_ENV
             echo "VERMAGIC_STATUS=✅ 已获取" >> $GITHUB_ENV
           else
             echo "❌ 无法解析 vermagic 值"
@@ -564,6 +565,8 @@ jobs:
         
         # vermagic 对比
         echo "======================================"
+        KERNEL_LINE="${{ env.KERNEL_LINE }}"
+        echo "官方 kernel 行: ${KERNEL_LINE:-未获取}"
         if [ -n "$KERNEL_LINE" ] && [ "$LOCAL_VERMAGICA" != "获取失败" ] && [ -n "$LOCAL_VERMAGIC" ] && [ "$LOCAL_VERMAGIC" != "获取失败" ]; then
           if [ "$KERNEL_LINE" = "$LOCAL_VERMAGICA" ]; then
             echo "✅ vermagic 对比结果: 完全一致"
