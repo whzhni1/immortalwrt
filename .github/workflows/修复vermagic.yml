@@ -399,6 +399,90 @@ jobs:
           echo "======================================"
           exit 1
         fi
+
+    - name: 添加 kmods 软件源到 distfeeds.conf
+      if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' && env.VERMAGIC_STATUS == '✅ 已获取' }}
+      run: |
+        echo "======================================"
+        echo "🔧 添加 kmods 软件源"
+        echo "======================================"
+    
+        cd ImmortalWrt
+    
+        # 获取版本号（去掉 v 前缀）
+        VERSION="${{ env.REPO_VERSION }}"
+        CLEAN_VERSION=$(echo "$VERSION" | sed 's/^v//')
+        echo "ImmortalWrt 版本: $CLEAN_VERSION"
+    
+        # 获取 kernel 信息
+        KERNEL_LINE="${{ env.KERNEL_LINE }}"
+        echo "官方 kernel 行: $KERNEL_LINE"
+    
+        # 从 kernel 行提取内核版本信息
+        # kernel - 6.6.104~3ca4b8cb2fcc3a2027e8496143a86cab-r1
+        # 需要转换为: 6.6.104-1-3ca4b8cb2fcc3a2027e8496143a86cab
+        if [ -n "$KERNEL_LINE" ]; then
+          # 提取版本部分 6.6.104~3ca4b8cb2fcc3a2027e8496143a86cab-r1
+          KERNEL_VERSION=$(echo "$KERNEL_LINE" | awk '{print $3}')
+          echo "提取的内核版本: $KERNEL_VERSION"
+      
+          # 去掉 -r1 后缀
+          KERNEL_VERSION=$(echo "$KERNEL_VERSION" | sed 's/-r[0-9]*$//')
+          echo "去掉后缀: $KERNEL_VERSION"
+      
+          # 将 ~ 替换为 -1-
+          KERNEL_VERSION=$(echo "$KERNEL_VERSION" | sed 's/~/-1-/')
+          echo "转换后的内核版本: $KERNEL_VERSION"
+      
+          # 构建 kmods URL
+          KMODS_URL="src/gz immortalwrt_kmods https://mirrors.vsean.net/openwrt/releases/$CLEAN_VERSION/targets/mediatek/filogic/kmods/$KERNEL_VERSION"
+          echo ""
+          echo "拼接的 kmods URL:"
+          echo "$KMODS_URL"
+          echo ""
+      
+          # 查找 distfeeds.conf 文件
+          DISTFEEDS_FILE="package/base-files/files/etc/opkg/distfeeds.conf"
+      
+          if [ -f "$DISTFEEDS_FILE" ]; then
+            echo "找到 distfeeds.conf 文件"
+            echo ""
+            echo "修改前的内容:"
+            cat "$DISTFEEDS_FILE"
+            echo ""
+        
+            # 备份原文件
+            cp "$DISTFEEDS_FILE" "${DISTFEEDS_FILE}.backup"
+        
+            # 将 kmods 行插入到第3行（在 base 行之后）
+            # 使用 sed 在第2行后面插入新行
+            sed -i "2a\\$KMODS_URL" "$DISTFEEDS_FILE"
+        
+            echo "已将 kmods 源添加到第3行"
+            echo ""
+            echo "修改后的内容:"
+            cat -n "$DISTFEEDS_FILE"
+            echo ""
+        
+            # 验证是否成功添加
+            if grep -q "immortalwrt_kmods" "$DISTFEEDS_FILE"; then
+              echo "✅ kmods 源添加成功！"
+              echo "添加的行号: 第3行"
+              echo "添加的内容: $KMODS_URL"
+            else
+              echo "❌ kmods 源添加失败"
+              cp "${DISTFEEDS_FILE}.backup" "$DISTFEEDS_FILE"
+            fi
+          else
+            echo "❌ 错误：未找到 distfeeds.conf 文件"
+            echo "尝试查找其他可能的位置..."
+            find . -name "distfeeds.conf" -type f 2>/dev/null
+          fi
+        else
+          echo "❌ 错误：无法获取 kernel 信息"
+        fi
+    
+        echo "======================================"
     
     - name: 加载自定义feeds和执行脚本Part1
       run: |
