@@ -312,6 +312,7 @@ jobs:
         else
           echo "❌ 官方 manifest 下载失败"
           exit 1
+        fi
         echo "======================================"
     
     - name: 修改内核编译脚本以使用固定 vermagic
