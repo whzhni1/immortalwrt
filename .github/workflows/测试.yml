@@ -45,7 +45,7 @@ jobs:
             echo "提取到的 kernel 行: $KERNEL_LINE"
 
             # 提取 32 位十六进制哈希
-            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk -F'~' '{print $2}')
+            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
             echo "解析出的 ABI: $OFFICIAL_VERMAGIC"
 
             # 测试1
