@@ -289,8 +289,7 @@ jobs:
           echo "-----------------------------"
           
           # 提取 kernel 行
-          KERNEL_LINE=$(grep '^kernel ' "$official.manifest" | awk '{print $3}' | head -1)
-          # KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
+          KERNEL_LINE=$(grep '^kernel ' official.manifest | awk '{print $3}' | head -1)
           echo "提取到的 kernel 行: $KERNEL_LINE"
           echo "KERNEL_LINE=$KERNEL_LINE" >> $GITHUB_ENV
           
