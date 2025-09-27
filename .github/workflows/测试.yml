@@ -44,14 +44,22 @@ jobs:
             KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
             echo "提取到的 kernel 行: $KERNEL_LINE"
 
-            KERNEL_ABI=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
-            echo "解析出的 ABI: $KERNEL_ABI"
-            #测试1
+            # 提取 32 位十六进制哈希
+            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
+            echo "解析出的 ABI: $OFFICIAL_VERMAGIC"
+
+            # 测试1
             KERNEL_LINE="kernel - 5.15.189-1-dab81cfed92fb4881f7b4fec9f787850"
             echo "测试1提取到的 kernel 行: $KERNEL_LINE"
+            TEST1_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
+            echo "测试1解析出的 ABI: $TEST1_VERMAGIC"
 
-            KERNEL_ABI=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
-            echo "测试1解析出的 ABI: $KERNEL_ABI"
+            # 测试2
+            KERNEL_LINE="kernel - 6.6.93~2ccac7a75355327cb6dfb4df1ecb575e-r1"
+            echo "测试2提取到的 kernel 行: $KERNEL_LINE"
+            TEST2_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
+            echo "测试2解析出的 ABI: $TEST2_VERMAGIC"
+
 
             
           else
