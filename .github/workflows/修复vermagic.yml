@@ -277,19 +277,20 @@ jobs:
         # 移除版本号中的 'v' 前缀（如果存在）
         CLEAN_VERSION=$(echo "$VERSION" | sed 's/^v//')
         
-        # 构建官方 manifest URL - 使用您原来的正确格式
+        # 构建官方 manifest URL 
         OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$CLEAN_VERSION/targets/$TARGET_PATH/immortalwrt-$CLEAN_VERSION-$TARGET_NAME.manifest"
         echo "官方 manifest URL: $OFFICIAL_MANIFEST_URL"
         
-        # 下载 manifest 文件（使用您原来的方法）
+        # 下载 manifest 文件
         if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
           echo "✅ 官方 manifest 下载成功"
           echo "------ manifest 前10行 ------"
           head -10 official.manifest
           echo "-----------------------------"
           
-          # 提取 kernel 行（使用您原来的方法）
-          KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
+          # 提取 kernel 行
+          KERNEL_LINE=$(grep '^kernel ' "$official.manifest" | awk '{print $3}' | head -1)
+          # KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
           echo "提取到的 kernel 行: $KERNEL_LINE"
           echo "KERNEL_LINE=$KERNEL_LINE" >> $GITHUB_ENV
           
@@ -310,33 +311,7 @@ jobs:
           fi
         else
           echo "❌ 官方 manifest 下载失败"
-          echo "尝试备用URL..."
-          
-          # 备用方案：尝试不带设备名的manifest
-          OFFICIAL_MANIFEST_URL="https://downloads.immortalwrt.org/releases/$CLEAN_VERSION/targets/$TARGET_PATH/immortalwrt-$CLEAN_VERSION-$TARGET_NAME.manifest"
-          echo "备用URL: $OFFICIAL_MANIFEST_URL"
-          
-          if wget -q -O official.manifest "$OFFICIAL_MANIFEST_URL"; then
-            echo "✅ 备用 manifest 下载成功"
-            KERNEL_LINE=$(grep '^kernel ' official.manifest | head -1)
-            OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk '{print $3}')
-            echo "解析出的官方 vermagic: $OFFICIAL_VERMAGIC"
-            
-            if [ -n "$OFFICIAL_VERMAGIC" ]; then
-              echo "$OFFICIAL_VERMAGIC" > .vermagic
-              echo "✅ 官方 vermagic 值已写入 .vermagic 文件"
-              echo "OFFICIAL_VERMAGIC=$OFFICIAL_VERMAGIC" >> $GITHUB_ENV
-              echo "VERMAGIC_STATUS=✅ 已获取" >> $GITHUB_ENV
-            else
-              echo "❌ 备用方案也无法解析 vermagic 值"
-              echo "VERMAGIC_STATUS=❌ 解析失败" >> $GITHUB_ENV
-            fi
-          else
-            echo "❌ 所有 manifest 下载尝试都失败"
-            echo "VERMAGIC_STATUS=❌ 下载失败" >> $GITHUB_ENV
-          fi
-        fi
-        
+          exit 1
         echo "======================================"
     
     - name: 修改内核编译脚本以使用固定 vermagic
@@ -553,8 +528,9 @@ jobs:
         # 获取本地编译的固件 vermagic（使用原来的ABI验证逻辑）
         LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
         if [ -n "$LOCAL_MANIFEST" ]; then
-          LOCAL_VERMAGICA=$(grep '^kernel ' "$LOCAL_MANIFEST" | head -1)
+          LOCAL_VERMAGICA=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
           echo "本地编译 kernel 行: ${LOCAL_VERMAGICA:-获取失败}"
+          echo "LOCAL_VERMAGICA=$LOCAL_VERMAGICA" >> $GITHUB_ENV
           LOCAL_VERMAGIC=$(echo "$LOCAL_VERMAGICA" | grep -oE '[0-9a-f]{32}')
           echo "提取到的 vermagic: ${LOCAL_VERMAGIC:-获取失败}"
           echo "LOCAL_VERMAGIC=$LOCAL_VERMAGIC" >> $GITHUB_ENV
@@ -580,6 +556,7 @@ jobs:
           fi
         else
           echo "⚠️ vermagic 对比结果: 无法对比（数据不完整）"
+          echo "LOCAL_VERMAGICA=获取失败" >> $GITHUB_ENV 
           echo "VERMAGIC_COMPARE=⚠️ 无法对比" >> $GITHUB_ENV
         fi
         echo "======================================"
