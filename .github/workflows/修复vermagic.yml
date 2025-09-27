@@ -303,7 +303,7 @@ jobs:
           echo "提取到的 kernel 行: $KERNEL_LINE"
           
           # 解析出 vermagic 值（ABI值）
-          OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | awk -F'~' '{print $2}')
+          OFFICIAL_VERMAGIC=$(echo "$KERNEL_LINE" | grep -oE '[0-9a-f]{32}')
           echo "解析出的官方 vermagic: $OFFICIAL_VERMAGIC"
           
           if [ -n "$OFFICIAL_VERMAGIC" ]; then
@@ -566,7 +566,7 @@ jobs:
         if [ -n "$LOCAL_MANIFEST" ]; then
           LOCAL_VERMAGICA=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
           echo "本地编译 kernel 行: ${LOCAL_VERMAGICA:-获取失败}"
-          LOCAL_VERMAGIC=$(echo "$LOCAL_VERMAGICA" | awk -F'~' '{print $2}')
+          LOCAL_VERMAGIC=$(echo "$LOCAL_VERMAGICA" | grep -oE '[0-9a-f]{32}')
           echo "提取到的 vermagic: ${LOCAL_VERMAGIC:-获取失败}"
           echo "LOCAL_VERMAGIC=$LOCAL_VERMAGIC" >> $GITHUB_ENV
         else
@@ -576,15 +576,15 @@ jobs:
         
         # vermagic 对比
         echo "======================================"
-        if [ -n "$OFFICIAL_VERMAGIC" ] && [ "$OFFICIAL_VERMAGIC" != "获取失败" ] && [ -n "$LOCAL_VERMAGIC" ] && [ "$LOCAL_VERMAGIC" != "获取失败" ]; then
-          if [ "$OFFICIAL_VERMAGIC" = "$LOCAL_VERMAGIC" ]; then
+        if [ -n "$KERNEL_LINE" ] && [ "$LOCAL_VERMAGICA" != "获取失败" ] && [ -n "$LOCAL_VERMAGIC" ] && [ "$LOCAL_VERMAGIC" != "获取失败" ]; then
+          if [ "$KERNEL_LINE" = "$LOCAL_VERMAGICA" ]; then
             echo "✅ vermagic 对比结果: 完全一致"
             echo "固件已兼容官方软件源"
             echo "VERMAGIC_COMPARE=✅ 一致" >> $GITHUB_ENV
           else
             echo "❌ vermagic 对比结果: 不一致"
-            echo "官方: $OFFICIAL_VERMAGIC"
-            echo "本地: $LOCAL_VERMAGIC"
+            echo "官方: $KERNEL_LINE"
+            echo "本地: $LOCAL_VERMAGICA"
             echo "VERMAGIC_COMPARE=❌ 不一致" >> $GITHUB_ENV
           fi
         else
@@ -626,8 +626,8 @@ jobs:
         
         ## 🔧 vermagic 信息
         
-        - **官方 vermagic**: ${{ env.OFFICIAL_VERMAGIC }}
-        - **本地 vermagic**: ${{ env.LOCAL_VERMAGIC }}
+        - **官方 vermagic**: ${{ env.KERNEL_LINE }}
+        - **本地 vermagic**: ${{ env.LOCAL_VERMAGICA }}
         - **对比结果**: ${{ env.VERMAGIC_COMPARE }}
         - **软件源兼容**: ${{ env.VERMAGIC_COMPARE == '✅ 一致' && '✅ 兼容官方软件源' || '❌ 不兼容官方软件源' }}
         
