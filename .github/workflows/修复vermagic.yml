@@ -26,16 +26,6 @@ on:
         required: false
         default: true
         type: boolean
-      RUN_PART1:
-        description: '执行 Part1 脚本'
-        required: false
-        default: true
-        type: boolean
-      RUN_PART2:
-        description: '执行 Part2 脚本'
-        required: false
-        default: false
-        type: boolean
       UPLOAD_BIN_DIR:
         description: '上传bin目录'
         required: false
@@ -435,7 +425,6 @@ jobs:
         fi
     
     - name: 加载自定义feeds和执行脚本Part1
-      if: ${{ github.event.inputs.RUN_PART1 == 'true' }}
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF ImmortalWrt/feeds.conf.default
         chmod +x $DIY_P1_SH
@@ -453,7 +442,6 @@ jobs:
         echo "Feeds 更新安装完成"
 
     - name: 加载设备配置和执行脚本Part2
-      if: ${{ github.event.inputs.RUN_PART2 == 'true' }}
       run: |
         if [ ! -f "${{ env.CONFIG_FILE }}" ]; then
           echo "❌ 错误：未找到配置文件 ${{ env.CONFIG_FILE }}"
