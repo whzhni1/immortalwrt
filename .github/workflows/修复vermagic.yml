@@ -400,7 +400,7 @@ jobs:
           exit 1
         fi
 
-        - name: 添加 kmods 软件源到 distfeeds
+    - name: 添加 kmods 软件源到 distfeeds
       if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' && env.VERMAGIC_STATUS == '✅ 已获取' }}
       run: |
         echo "======================================"
