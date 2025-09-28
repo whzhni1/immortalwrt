@@ -724,7 +724,7 @@ jobs:
         
         ## 🔧 vermagic 信息
         
-        - **官方 vermagic**: ${{ env.KERNEL_LINE }}
+        - **官方 vermagic**: ${{ env.KERNEL_DIR }}
         - **本地 vermagic**: ${{ env.LOCAL_VERMAGICA }}
         - **对比结果**: ${{ env.VERMAGIC_COMPARE }}
         - **软件源兼容**: ${{ env.VERMAGIC_COMPARE == '✅ 一致' && '✅ 兼容官方软件源' || '❌ 不兼容官方软件源' }}
