@@ -1,0 +1,3 @@
+luci-app-wechatpush
+luci-app-passwall
+luci-app-ddns
