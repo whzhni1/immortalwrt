@@ -1,3 +1,6 @@
+# packages.txt - 自动安装的软件包列表
+# 每行一个包名，以 # 开头的行为注释
+
 luci-app-wechatpush
 luci-app-passwall
 luci-app-ddns
