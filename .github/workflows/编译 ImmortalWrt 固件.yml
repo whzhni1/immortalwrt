@@ -276,7 +276,8 @@ jobs:
         
         if [ -n "$TARGET_LINE" ]; then
           # 提取 mediatek_filogic 部分
-          TARGET_NAME=$(echo "$TARGET_LINE" | sed -n 's/^CONFIG_TARGET_KATEX_INLINE_OPEN[^_]*_[^_]*KATEX_INLINE_CLOSE_DEVICE_.*=y/\1/p')
+          # 方法1：使用 awk（更可靠）
+          TARGET_NAME=$(echo "$TARGET_LINE" | awk -F'_' '{print $3"_"$4}')
           echo "提取的 TARGET: $TARGET_NAME"
           
           # 转换为路径格式 mediatek_filogic -> mediatek/filogic
@@ -288,12 +289,12 @@ jobs:
           echo "TARGET_PATH=$TARGET_PATH" >> $GITHUB_ENV
         else
           echo "⚠️ 无法从配置文件提取 TARGET，使用默认值"
-          echo "TARGET_NAME=mediatek-filogic" >> $GITHUB_ENV
+          echo "TARGET_NAME=mediatek_filogic" >> $GITHUB_ENV
           echo "TARGET_PATH=mediatek/filogic" >> $GITHUB_ENV
         fi
         
         echo "======================================"
-
+        
     - name: 获取官方 kmods 目录和 vermagic 值
       if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' }}
       run: |
@@ -327,22 +328,15 @@ jobs:
         if [ -n "$KERNEL_DIR" ]; then
           echo "✅ 获取到 kmods 目录名: $KERNEL_DIR"
           
-          # 从目录名解析 kernel 版本信息
-          # 格式: 6.6.104-1-3ca4b8cb2fcc3a2027e8496143a86cab
-          # 需要转换回: 6.6.104~3ca4b8cb2fcc3a2027e8496143a86cab-r1
-          
           # 提取 vermagic（32位哈希值）
           OFFICIAL_VERMAGIC=$(echo "$KERNEL_DIR" | grep -oE '[0-9a-f]{32}')
           echo "解析出的官方 vermagic: $OFFICIAL_VERMAGIC"
           
-          # 构造 kernel 行格式（用于对比）
-          # 6.6.104-1-xxx -> 6.6.104~xxx-r1
-          KERNEL_LINE=$(echo "$KERNEL_DIR" | sed 's/-1-/~/;s/$/-r1/')
-          echo "构造的 kernel 行: $KERNEL_LINE"
+          # 保存原始的 kernel 目录名用于对比
+          echo "官方 kernel 版本标识: $KERNEL_DIR"
           
           # 保存到环境变量
           echo "KERNEL_DIR=$KERNEL_DIR" >> $GITHUB_ENV
-          echo "KERNEL_LINE=$KERNEL_LINE" >> $GITHUB_ENV
           echo "OFFICIAL_VERMAGIC=$OFFICIAL_VERMAGIC" >> $GITHUB_ENV
           
           if [ -n "$OFFICIAL_VERMAGIC" ]; then
@@ -623,9 +617,15 @@ jobs:
         # 获取本地编译的固件 vermagic
         LOCAL_MANIFEST=$(find bin -name "*.manifest" 2>/dev/null | head -1)
         if [ -n "$LOCAL_MANIFEST" ]; then
-          LOCAL_VERMAGICA=$(grep '^kernel ' "$LOCAL_MANIFEST" | awk '{print $3}' | head -1)
-          echo "本地编译 kernel 行: ${LOCAL_VERMAGICA:-获取失败}"
+          LOCAL_KERNEL_LINE=$(grep '^kernel ' "$LOCAL_MANIFEST" | head -1)
+          echo "本地 kernel 完整行: $LOCAL_KERNEL_LINE"
+          
+          # 提取版本部分（第3个字段）
+          LOCAL_VERMAGICA=$(echo "$LOCAL_KERNEL_LINE" | awk '{print $3}')
+          echo "本地编译 kernel 版本: ${LOCAL_VERMAGICA:-获取失败}"
           echo "LOCAL_VERMAGICA=$LOCAL_VERMAGICA" >> $GITHUB_ENV
+          
+          # 提取 vermagic 哈希值
           LOCAL_VERMAGIC=$(echo "$LOCAL_VERMAGICA" | grep -oE '[0-9a-f]{32}')
           echo "提取到的 vermagic: ${LOCAL_VERMAGIC:-获取失败}"
           echo "LOCAL_VERMAGIC=$LOCAL_VERMAGIC" >> $GITHUB_ENV
@@ -637,22 +637,28 @@ jobs:
         
         # vermagic 对比
         echo "======================================"
-        KERNEL_LINE="${{ env.KERNEL_LINE }}"
+        KERNEL_DIR="${{ env.KERNEL_DIR }}"
         OFFICIAL_VERMAGIC="${{ env.OFFICIAL_VERMAGIC }}"
-        echo "官方 kernel 行: ${KERNEL_LINE:-未获取}"
+        
+        echo "官方 kernel 目录: ${KERNEL_DIR:-未获取}"
         echo "官方 vermagic: ${OFFICIAL_VERMAGIC:-未获取}"
-        echo "本地 kernel 行: ${LOCAL_VERMAGICA:-未获取}"
+        echo "本地 kernel 版本: ${LOCAL_VERMAGICA:-未获取}"
         echo "本地 vermagic: ${LOCAL_VERMAGIC:-未获取}"
         
-        if [ -n "$KERNEL_LINE" ] && [ -n "$LOCAL_VERMAGICA" ] && [ "$LOCAL_VERMAGICA" != "获取失败" ]; then
-          if [ "$KERNEL_LINE" = "$LOCAL_VERMAGICA" ]; then
-            echo "✅ vermagic 对比结果: 完全一致"
+        # 简化对比：检查本地版本是否包含官方的内核版本标识
+        if [ -n "$KERNEL_DIR" ] && [ -n "$LOCAL_VERMAGICA" ] && [ "$LOCAL_VERMAGICA" != "获取失败" ]; then
+          # 去掉可能的后缀（如 -r1）进行对比
+          LOCAL_VERSION_CLEAN=$(echo "$LOCAL_VERMAGICA" | sed 's/-r[0-9]*$//')
+          
+          # 检查是否包含相同的内核版本信息
+          if echo "$LOCAL_VERSION_CLEAN" | grep -q "$OFFICIAL_VERMAGIC"; then
+            echo "✅ vermagic 对比结果: 一致"
             echo "固件已兼容官方软件源"
             echo "VERMAGIC_COMPARE=✅ 一致" >> $GITHUB_ENV
           else
             echo "❌ vermagic 对比结果: 不一致"
-            echo "官方: $KERNEL_LINE"
-            echo "本地: $LOCAL_VERMAGICA"
+            echo "官方包含: $OFFICIAL_VERMAGIC"
+            echo "本地包含: $LOCAL_VERMAGIC"
             echo "VERMAGIC_COMPARE=❌ 不一致" >> $GITHUB_ENV
           fi
         else
