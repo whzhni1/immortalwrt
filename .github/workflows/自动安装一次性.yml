@@ -468,54 +468,188 @@ jobs:
         echo "$KMODS_URL"
         echo ""
         
-        # 使用 auto-setup-kmods.sh 创建 uci-defaults 脚本
-        if [ -f "$GITHUB_WORKSPACE/auto-setup-kmods.sh" ]; then
-            # 执行脚本生成内容
-            bash "$GITHUB_WORKSPACE/auto-setup-kmods.sh" > temp-auto-setup.sh
-            
-            # 创建 uci-defaults 目录
-            mkdir -p files/etc/uci-defaults
-            
-            # 复制并修改脚本
-            cp temp-auto-setup.sh files/etc/uci-defaults/99-auto-setup
-            
-            # 替换 kmods URL
-            sed -i "s|KMODS_URL_PLACEHOLDER|$KMODS_URL|g" files/etc/uci-defaults/99-auto-setup
-            
-            chmod +x files/etc/uci-defaults/99-auto-setup
-            
-            echo "✅ 创建了 uci-defaults 自动配置脚本"
-            echo "脚本路径: files/etc/uci-defaults/99-auto-setup"
-            
-            # 清理临时文件
-            rm -f temp-auto-setup.sh
+        # 读取要安装的包列表（如果存在）
+        PACKAGES_LIST=""
+        if [ -f "$GITHUB_WORKSPACE/packages.txt" ]; then
+            echo "读取软件包列表..."
+            # 过滤掉注释和空行
+            PACKAGES_LIST=$(grep -v '^#' "$GITHUB_WORKSPACE/packages.txt" | grep -v '^$' | tr '\n' ' ')
+            echo "要安装的软件包: $PACKAGES_LIST"
         else
-            echo "⚠️ auto-setup-kmods.sh 不存在，创建基础版本"
-            
-            # 创建基础的 uci-defaults 脚本
-            mkdir -p files/etc/uci-defaults
-            cat > files/etc/uci-defaults/99-auto-setup <<'EOFD'
-        #!/bin/sh
+            echo "packages.txt 不存在，使用默认包列表"
+            PACKAGES_LIST="luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn wget-ssl curl"
+        fi
         
-        # 简单版本：只添加 kmods 源
-        KMODS_URL="$KMODS_URL"
+        # 创建 uci-defaults 目录
+        mkdir -p files/etc/uci-defaults
+        
+        # 创建自动配置脚本
+        cat > files/etc/uci-defaults/99-auto-setup <<'EOFD'
+        #!/bin/sh
+        # 自动配置 kmods 源并安装插件
+        # 只有全部成功才会删除自己，否则下次启动继续尝试
+        
+        KMODS_URL="KMODS_URL_PLACEHOLDER"
+        LOG_FILE="/root/auto-setup.log"
+        PACKAGES_TO_INSTALL="PACKAGES_LIST_PLACEHOLDER"
+        SUCCESS_FLAG="/etc/auto-setup.success"
+        
+        log() {
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+            logger -t "auto-setup" "$1"
+        }
+        
+        # 检查是否已经成功执行过
+        if [ -f "$SUCCESS_FLAG" ]; then
+            log "自动配置已经成功完成过，跳过"
+            exit 0  # 返回0删除自己
+        fi
+        
+        log "======================================"
+        log "开始自动配置 (PID: $$)"
+        log "======================================"
+        
+        # 第一步：添加 kmods 源
+        add_kmods() {
+            log "步骤1: 添加 kmods 软件源"
+            
+            if [ ! -f /etc/opkg/distfeeds.conf ]; then
+                log "错误: distfeeds.conf 不存在"
+                return 1
+            fi
+            
+            if grep -q "immortalwrt_kmods" /etc/opkg/distfeeds.conf; then
+                log "kmods 源已存在"
+                return 0
+            fi
+            
+            # 在第2行后插入（成为第3行）
+            awk -v line="$KMODS_URL" 'NR==2{print; print line; next}1' /etc/opkg/distfeeds.conf > /tmp/distfeeds.tmp
+            if [ -s /tmp/distfeeds.tmp ]; then
+                mv /tmp/distfeeds.tmp /etc/opkg/distfeeds.conf
+                log "✅ kmods 源添加成功"
+                return 0
+            else
+                log "❌ 添加 kmods 源失败"
+                return 1
+            fi
+        }
+        
+        # 第二步：等待系统稳定（首次启动后等待）
+        if [ ! -f /tmp/auto-setup-waited ]; then
+            log "等待系统稳定（60秒）..."
+            sleep 60
+            touch /tmp/auto-setup-waited
+        fi
+        
+        # 第三步：检查网络
+        check_network() {
+            log "步骤2: 检查网络连接"
+            
+            for ip in 223.5.5.5 114.114.114.114 8.8.8.8 1.1.1.1; do
+                if ping -c 1 -W 2 "$ip" >/dev/null 2>&1; then
+                    log "✅ 网络正常 (通过 $ip)"
+                    return 0
+                fi
+            done
+            
+            log "❌ 网络不可用"
+            return 1
+        }
+        
+        # 第四步：安装软件包
+        install_packages() {
+            log "步骤3: 安装软件包"
+            
+            # 更新软件源
+            log "更新软件源..."
+            if ! opkg update >> "$LOG_FILE" 2>&1; then
+                log "❌ 软件源更新失败"
+                return 1
+            fi
+            log "✅ 软件源更新成功"
+            
+            # 安装包
+            local all_success=0
+            for pkg in $PACKAGES_TO_INSTALL; do
+                [ -z "$pkg" ] && continue
+                
+                if opkg list-installed | grep -q "^$pkg "; then
+                    log "⏭️  $pkg 已安装"
+                else
+                    log "📦 安装 $pkg..."
+                    if opkg install "$pkg" >> "$LOG_FILE" 2>&1; then
+                        log "✅ $pkg 安装成功"
+                    else
+                        log "❌ $pkg 安装失败"
+                        all_success=1
+                    fi
+                fi
+            done
+            
+            return $all_success
+        }
+        
+        # 执行配置流程
+        RESULT=0
         
         # 添加 kmods 源
-        if [ -f /etc/opkg/distfeeds.conf ]; then
-            if ! grep -q "immortalwrt_kmods" /etc/opkg/distfeeds.conf; then
-                sed -i "2a\\$KMODS_URL" /etc/opkg/distfeeds.conf
-                echo "kmods feed added" > /tmp/kmods-added.log
+        if ! add_kmods; then
+            log "kmods 源添加失败，下次启动重试"
+            RESULT=1
+        fi
+        
+        # 如果有软件包需要安装
+        if [ -n "$PACKAGES_TO_INSTALL" ] && [ "$PACKAGES_TO_INSTALL" != " " ]; then
+            # 检查网络
+            if ! check_network; then
+                log "网络不可用，下次启动重试"
+                exit 1  # 返回非0，保留脚本
+            fi
+            
+            # 安装软件包
+            if ! install_packages; then
+                log "软件包安装未完全成功，下次启动重试"
+                exit 1  # 返回非0，保留脚本
             fi
         fi
         
+        # 所有任务完成
+        log "======================================"
+        log "✅ 所有配置成功完成"
+        log "======================================"
+        
+        # 创建成功标记
+        touch "$SUCCESS_FLAG"
+        
+        # 返回0，让系统删除此脚本
         exit 0
         EOFD
-            
-            # 替换变量
-            sed -i "s|\$KMODS_URL|$KMODS_URL|g" files/etc/uci-defaults/99-auto-setup
-            chmod +x files/etc/uci-defaults/99-auto-setup
-        fi
         
+        # 替换占位符
+        sed -i "s|KMODS_URL_PLACEHOLDER|$KMODS_URL|g" files/etc/uci-defaults/99-auto-setup
+        sed -i "s|PACKAGES_LIST_PLACEHOLDER|$PACKAGES_LIST|g" files/etc/uci-defaults/99-auto-setup
+        
+        chmod +x files/etc/uci-defaults/99-auto-setup
+        
+        echo "✅ 创建了 uci-defaults 自动配置脚本"
+        echo ""
+        echo "📋 脚本特性："
+        echo "  ✅ 只有成功才会删除自己"
+        echo "  ✅ 失败会在下次启动时重试"
+        echo "  ✅ 网络不通会保留脚本等待下次"
+        echo "  ✅ 重启不会丢失进度"
+        echo ""
+        echo "📦 将安装的软件包："
+        if [ -n "$PACKAGES_LIST" ]; then
+            for pkg in $PACKAGES_LIST; do
+                echo "     - $pkg"
+            done
+        else
+            echo "     （无）"
+        fi
+        echo ""
+        echo "📝 日志位置: /root/auto-setup.log"
         echo "======================================"
         
     - name: 加载自定义feeds和执行脚本Part1
