@@ -14,8 +14,8 @@ MAX_PING_RETRY=5
 # 需要安装的插件列表
 PACKAGES_TO_INSTALL="
     luci-app-ddns
-    wget-ssl
-    curl
+    luci-app-openclash
+    autocore
 "
 
 # 测试网络的 IP 列表
