@@ -22,11 +22,7 @@ RETRY_DELAY=30
 # 需要安装的插件列表（可以自定义）
 PACKAGES_TO_INSTALL="
     luci-app-ddns
-    luci-app-upnp
-    luci-app-firewall
     luci-app-wol
-    luci-i18n-base-zh-cn
-    luci-i18n-firewall-zh-cn
 "
 
 # 测试网络连接的 IP 列表
