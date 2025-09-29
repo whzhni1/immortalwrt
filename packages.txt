@@ -2,5 +2,10 @@
 # 每行一个包名，以 # 开头的行为注释
 
 luci-app-wechatpush
+luci-i18n-wechatpush-zh-cn
 luci-app-passwall
-luci-app-ddns
+luci-i18n-passwall-zh-cn
+luci-app-openlist
+luci-i18n-openlist-zh-cn
+luci-app-filemanager
+luci-i18n-filemanager-zh-cn
