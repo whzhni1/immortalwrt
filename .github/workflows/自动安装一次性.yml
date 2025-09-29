@@ -480,39 +480,49 @@ jobs:
             PACKAGES_LIST="luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn wget-ssl curl"
         fi
         
-        # 创建 uci-defaults 目录
-        mkdir -p files/etc/uci-defaults
+        # 创建 init.d 目录
+        mkdir -p files/etc/init.d
         
-        # 检查并复制 auto-setup-uci.sh 脚本
-        if [ -f "$GITHUB_WORKSPACE/auto-setup-uci.sh" ]; then
-            echo "使用 auto-setup-uci.sh 脚本"
-            cp "$GITHUB_WORKSPACE/auto-setup-uci.sh" files/etc/uci-defaults/99-auto-setup
+        # 检查并复制 auto-setup-init.sh 脚本
+        if [ -f "$GITHUB_WORKSPACE/auto-setup-init.sh" ]; then
+            echo "使用 auto-setup-init.sh 脚本"
+            cp "$GITHUB_WORKSPACE/auto-setup-init.sh" files/etc/init.d/auto-setup
             
             # 替换占位符
-            sed -i "s|KMODS_URL_PLACEHOLDER|$KMODS_URL|g" files/etc/uci-defaults/99-auto-setup
-            sed -i "s|PACKAGES_LIST_PLACEHOLDER|$PACKAGES_LIST|g" files/etc/uci-defaults/99-auto-setup
+            sed -i "s|KMODS_URL_PLACEHOLDER|$KMODS_URL|g" files/etc/init.d/auto-setup
+            sed -i "s|PACKAGES_LIST_PLACEHOLDER|$PACKAGES_LIST|g" files/etc/init.d/auto-setup
             
-            chmod +x files/etc/uci-defaults/99-auto-setup
+            chmod +x files/etc/init.d/auto-setup
             
-            echo "✅ 创建了 uci-defaults 自动配置脚本"
+            # 创建启动链接（确保开机自启）
+            mkdir -p files/etc/rc.d
+            ln -sf ../init.d/auto-setup files/etc/rc.d/S99auto-setup
+            
+            echo "✅ 创建了 init.d 自动配置脚本"
             echo ""
-            echo "📋 脚本功能："
-            echo "  1. 系统启动时立即添加 kmods 源到 distfeeds.conf 第3行"
+            echo "📋 脚本特性："
+            echo "  ⏰ START=99 确保网络服务已启动"
+            echo "  🔄 失败自动重试（下次启动）"
+            echo "  🗑️ 成功后自动删除自己"
+            echo "  🚫 无法删除则自动禁用"
+            echo ""
+            echo "📦 执行流程："
+            echo "  1. 添加 kmods 源到 distfeeds.conf 第3行"
             echo "  2. 等待3分钟让系统稳定"
             echo "  3. 检查网络（最多重试5次，每次间隔1分钟）"
-            echo "  4. 安装以下软件包："
+            echo "  4. 安装软件包："
             if [ -n "$PACKAGES_LIST" ]; then
                 for pkg in $PACKAGES_LIST; do
                     echo "     - $pkg"
                 done
             fi
             echo "  5. 自动安装 Lucky 最新正式版"
-            echo "  6. 成功后删除自己，失败则下次启动重试"
             echo ""
             echo "📝 日志位置: /tmp/auto-setup-[时间戳].log"
+            echo "✅ 成功日志: /root/auto-setup-success.log"
             echo "======================================"
         else
-            echo "❌ 错误: auto-setup-uci.sh 文件不存在"
+            echo "❌ 错误: auto-setup-init.sh 文件不存在"
             exit 1
         fi
             
