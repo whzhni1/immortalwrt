@@ -389,8 +389,8 @@ boot() {
         touch "$SUCCESS_FLAG"
         
         # 保存日志
-        cp "$LOG_FILE" "/root/auto-setup-success.log" 2>/dev/null
-        log "日志已保存到: /root/auto-setup-success.log"
+        cp "$LOG_FILE" "/tmp/auto-setup-success.log" 2>/dev/null
+        log "日志已保存到: /tmp/auto-setup-success.log"
         
         # 删除自己
         remove_self
