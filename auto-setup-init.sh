@@ -8,7 +8,6 @@ STOP=01
 # 配置参数（会被工作流替换）
 KMODS_URL="KMODS_URL_PLACEHOLDER"
 LOG_FILE="/tmp/auto-setup-$(date +%Y%m%d-%H%M%S).log"
-SUCCESS_FLAG="/etc/auto-setup.success"
 PING_RETRY=5   # ping重试次数
 PING_WAIT=60   # 每次ping失败等待60秒
 
@@ -341,13 +340,6 @@ install_lucky() {
 
 # 主执行函数
 boot() {
-    # 检查是否已经成功执行过
-    if [ -f "$SUCCESS_FLAG" ]; then
-        log "自动配置已完成，删除脚本"
-        remove_self
-        exit 0
-    fi
-    
     log "======================================"
     log "开始自动配置 (PID: $$)"
     log "日志文件: $LOG_FILE"
@@ -384,9 +376,6 @@ boot() {
         log "======================================"
         log "✅ 所有配置成功完成"
         log "======================================"
-        
-        # 创建成功标记
-        touch "$SUCCESS_FLAG"
         
         # 保存日志
         cp "$LOG_FILE" "/tmp/auto-setup-success.log" 2>/dev/null
