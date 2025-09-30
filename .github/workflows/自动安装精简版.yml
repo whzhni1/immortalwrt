@@ -360,18 +360,3 @@ jobs:
           - **源码**: ${{ env.REPO_URL }}@${{ env.REPO_VERSION }}
         draft: false
         prerelease: false
-
-    - name: 清理旧数据
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 7
-        keep_minimum_runs: 10
-
-    - name: 清理旧Release
-      uses: dev-drprasad/delete-older-releases@v0.3.2
-      if: github.event.inputs.UPLOAD_RELEASE == 'true'
-      with:
-        keep_latest: 10
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
