@@ -32,9 +32,9 @@ remove_self() {
     
     # 尝试删除脚本
     if rm -f /etc/init.d/auto-setup 2>/dev/null; then
-        log "✅ 自动配置脚本已删除"
+        log "? 自动配置脚本已删除"
     else
-        log "⚠️ 无法删除脚本，已禁用服务"
+        log "?? 无法删除脚本，已禁用服务"
     fi
     
     # 删除 rc.d 链接
@@ -60,11 +60,11 @@ add_kmods() {
     awk -v line="$KMODS_URL" 'NR==2{print; print line; next}1' /etc/opkg/distfeeds.conf > /tmp/distfeeds.tmp
     if [ -s /tmp/distfeeds.tmp ]; then
         mv /tmp/distfeeds.tmp /etc/opkg/distfeeds.conf
-        log "✅ kmods 源添加成功"
+        log "? kmods 源添加成功"
         log "添加的内容: $KMODS_URL"
         return 0
     else
-        log "❌ 添加 kmods 源失败"
+        log "? 添加 kmods 源失败"
         return 1
     fi
 }
@@ -80,7 +80,7 @@ check_network_with_retry() {
         
         for ip in $TEST_IPS; do
             if ping -c 1 -W 2 "$ip" >/dev/null 2>&1; then
-                log "✅ 网络正常 (通过 $ip)"
+                log "? 网络正常 (通过 $ip)"
                 return 0
             fi
         done
@@ -91,55 +91,65 @@ check_network_with_retry() {
         fi
     done
     
-    log "❌ 网络检测失败（已重试 ${PING_RETRY} 次）"
+    log "? 网络检测失败（已重试 ${PING_RETRY} 次）"
     return 1
 }
 
 # 安装软件包
 install_packages() {
-    log "需要安装的插件 ${PACKAGES_TO_INSTALL}"
-    if [ -z "$PACKAGES_TO_INSTALL" ] || [ "$PACKAGES_TO_INSTALL" = " " ] || [ "$PACKAGES_TO_INSTALL" = "PACKAGES_LIST_PLACEHOLDER" ]; then
-        log "没有需要安装的软件包，跳过"
-        return 0
+    log "步骤3: 安装软件包"
+    
+    # 直接检查包列表是否有效
+    if [ -z "$PACKAGES_TO_INSTALL" ] || [ "$PACKAGES_TO_INSTALL" = "PACKAGES_LIST_PLACEHOLDER" ]; then
+        log "? 软件包列表为空或未正确配置"
+        return 1
     fi
     
-    log "步骤3: 安装软件包"
+    log "需要安装的插件: $PACKAGES_TO_INSTALL"
     
     # 更新软件源
     log "更新软件源..."
     if ! opkg update >> "$LOG_FILE" 2>&1; then
-        log "❌ 软件源更新失败"
+        log "? 软件源更新失败"
         return 1
     fi
-    log "✅ 软件源更新成功"
+    log "? 软件源更新成功"
     
     # 安装包
     local failed=0
     local success=0
+    local skipped=0
+    
     for pkg in $PACKAGES_TO_INSTALL; do
+        # 清理包名中的空格
+        pkg=$(echo "$pkg" | xargs)
         [ -z "$pkg" ] && continue
         
+        # 检查是否已安装
         if opkg list-installed | grep -q "^$pkg "; then
-            log "⏭️  $pkg 已安装"
+            log "??  $pkg 已安装，跳过"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        
+        log "?? 安装 $pkg..."
+        if opkg install "$pkg" >> "$LOG_FILE" 2>&1; then
+            log "? $pkg 安装成功"
+            success=$((success + 1))
         else
-            log "📦 安装 $pkg..."
-            if opkg install "$pkg" >> "$LOG_FILE" 2>&1; then
-                log "✅ $pkg 安装成功"
-                success=$((success + 1))
-            else
-                log "❌ $pkg 安装失败"
-                failed=$((failed + 1))
-            fi
+            log "? $pkg 安装失败"
+            failed=$((failed + 1))
         fi
     done
     
-    log "软件包安装完成: 成功 $success 个，失败 $failed 个"
+    log "软件包安装完成: 成功 $success 个，跳过 $skipped 个，失败 $failed 个"
     
     if [ $failed -gt 0 ]; then
         return 1
     fi
     return 0
 }
+
 
 # 安装 Lucky
 install_lucky() {
@@ -284,7 +294,7 @@ install_lucky() {
     fi
     
     if [ -z "$selected_file" ]; then
-        log "❌ 没有可用的安装包"
+        log "? 没有可用的安装包"
         return 1
     fi
     
@@ -297,14 +307,14 @@ install_lucky() {
     log "开始下载..."
     webget /tmp/lucky.tar.gz "$download_url"
     if [ "$result" != "200" ]; then
-        log "❌ 下载失败 (HTTP: $result)"
+        log "? 下载失败 (HTTP: $result)"
         return 1
     fi
     
     log "下载成功，开始解压..."
     mkdir -p "$luckydir"
     if ! tar -zxf '/tmp/lucky.tar.gz' -C "$luckydir/" >> "$LOG_FILE" 2>&1; then
-        log "❌ 解压失败"
+        log "? 解压失败"
         rm -f /tmp/lucky.tar.gz
         return 1
     fi
@@ -328,12 +338,12 @@ install_lucky() {
         chmod 755 /etc/init.d/lucky.daji
         /etc/init.d/lucky.daji enable
         /etc/init.d/lucky.daji restart >> "$LOG_FILE" 2>&1
-        log "✅ Lucky 服务已启动"
+        log "? Lucky 服务已启动"
     else
-        log "⚠️ 未找到 luckyservice 脚本，请手动启动 Lucky"
+        log "?? 未找到 luckyservice 脚本，请手动启动 Lucky"
     fi
     
-    log "✅ Lucky 安装完成"
+    log "? Lucky 安装完成"
     log "访问地址: http://你的路由器IP:16601"
     
     return 0
@@ -375,7 +385,7 @@ boot() {
     
     if [ $FAILED -eq 0 ]; then
         log "======================================"
-        log "✅ 所有配置成功完成"
+        log "? 所有配置成功完成"
         log "======================================"
         
         # 保存日志
@@ -385,7 +395,7 @@ boot() {
         # 删除自己
         remove_self
     else
-        log "❌ 配置未完全成功，下次启动继续"
+        log "? 配置未完全成功，下次启动继续"
     fi
 }
 
