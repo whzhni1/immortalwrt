@@ -216,19 +216,86 @@ jobs:
     - name: 修改内核编译脚本
       if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' && env.VERMAGIC_STATUS == '✅ 已获取' }}
       run: |
+        echo "======================================"
         echo "🔧 修改内核编译脚本"
-        
+        echo "======================================"
+    
         cd ImmortalWrt
+    
+        if [ ! -f ".vermagic" ]; then
+          echo "❌ 错误：.vermagic 文件不存在"
+          exit 1
+        fi
+    
+        echo "当前目录的 .vermagic 内容: $(cat .vermagic)"
+    
         KERNEL_DEFAULTS_FILE="include/kernel-defaults.mk"
-        
-        if [ -f "$KERNEL_DEFAULTS_FILE" ]; then
-          cp "$KERNEL_DEFAULTS_FILE" "${KERNEL_DEFAULTS_FILE}.backup"
-          awk '/> \$(LINUX_DIR)\/\.vermagic/ {print "\tcp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic"; next} 1' \
-            "$KERNEL_DEFAULTS_FILE" > "${KERNEL_DEFAULTS_FILE}.tmp"
-          mv "${KERNEL_DEFAULTS_FILE}.tmp" "$KERNEL_DEFAULTS_FILE"
-          echo "✅ 内核脚本修改成功"
+        echo "查找文件: $KERNEL_DEFAULTS_FILE"
+    
+        if [ ! -f "$KERNEL_DEFAULTS_FILE" ]; then
+          echo "❌ 错误：文件 $KERNEL_DEFAULTS_FILE 不存在"
+          exit 1
+        fi
+    
+        echo "✅ 文件存在，开始修改..."
+    
+        cp "$KERNEL_DEFAULTS_FILE" "${KERNEL_DEFAULTS_FILE}.backup"
+        echo "已备份文件"
+    
+        echo "正在查找 vermagic 生成行..."
+    
+        TARGET_LINE_NUM=""
+    
+        # 查找包含 > $(LINUX_DIR)/.vermagic 的行
+        TARGET_LINE_NUM=$(grep -n "> \$(LINUX_DIR)/\.vermagic" "$KERNEL_DEFAULTS_FILE" 2>/dev/null | head -1 | cut -d: -f1)
+    
+        if [ -z "$TARGET_LINE_NUM" ]; then
+          # 备用搜索：只搜索 .vermagic
+          TARGET_LINE_NUM=$(grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE" | grep -v "^#" | head -1 | cut -d: -f1)
+        fi
+    
+        if [ -n "$TARGET_LINE_NUM" ]; then
+          echo "找到目标行号: $TARGET_LINE_NUM"
+      
+          ORIGINAL_LINE=$(sed -n "${TARGET_LINE_NUM}p" "$KERNEL_DEFAULTS_FILE")
+          echo "原始内容: $ORIGINAL_LINE"
+      
+          echo "开始替换第 $TARGET_LINE_NUM 行..."
+      
+          # 使用 awk 替换指定行（最可靠的方法）
+          awk -v n="$TARGET_LINE_NUM" 'NR==n {print "\tcp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic"; next} 1' "$KERNEL_DEFAULTS_FILE" > "${KERNEL_DEFAULTS_FILE}.tmp"
+      
+          if [ -f "${KERNEL_DEFAULTS_FILE}.tmp" ]; then
+            mv "${KERNEL_DEFAULTS_FILE}.tmp" "$KERNEL_DEFAULTS_FILE"
+            echo "✅ 替换完成"
+          else
+            echo "❌ 替换失败"
+            cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
+            exit 1
+          fi
         else
-          echo "❌ 内核脚本文件不存在"
+          echo "❌ 无法找到目标行"
+          echo "显示所有包含 .vermagic 的行:"
+          grep -n "\.vermagic" "$KERNEL_DEFAULTS_FILE"
+          exit 1
+        fi
+    
+        echo "======================================"
+        echo "验证修改结果..."
+    
+        if grep -q "cp \$(TOPDIR)/.vermagic \$(LINUX_DIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"; then
+          echo "✅ 修改成功！"
+          echo "修改后的行:"
+          grep -n "cp \$(TOPDIR)/.vermagic" "$KERNEL_DEFAULTS_FILE"
+          echo "======================================"
+          echo "✅ 内核编译脚本修改成功"
+          echo "======================================"
+        else
+          echo "❌ 修改失败"
+          cp "${KERNEL_DEFAULTS_FILE}.backup" "$KERNEL_DEFAULTS_FILE"
+          echo "======================================"
+          echo "❌ 内核编译脚本修改失败"
+          echo "======================================"
           exit 1
         fi
 
