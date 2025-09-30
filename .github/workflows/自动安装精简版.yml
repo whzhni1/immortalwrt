@@ -298,6 +298,7 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: 下载软件包并编译
+      id: compile
       run: |
         cd ImmortalWrt
         make defconfig
@@ -308,12 +309,12 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 整理和验证固件
+      id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         cd ImmortalWrt/bin/targets/*/*
         rm -rf packages
         
-        # 重命名固件文件
         for file in *; do
           if [[ -f "$file" ]]; then
             new_name="${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}-${file#*${{ env.DEVICE_NAME }}-}"
@@ -323,7 +324,7 @@ jobs:
         
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
-        echo "固件文件:"
+        echo "整理后的文件:"
         ls -lh
 
     - name: 上传bin目录
@@ -351,12 +352,8 @@ jobs:
         tag_name: ${{ env.FILE_DATE }}-${{ env.DEVICE_FULL_NAME }}
         body: |
           # ${{ env.DEVICE_FULL_NAME }} 固件
-          
-          ## 固件信息
           - **设备**: ${{ env.DEVICE_FULL_NAME }}
-          - **平台**: ${{ env.TARGET_PATH }}
-          - **时间**: ${{ env.FILE_DATE }}
-          - **登录**: ${{ env.IP_ADDR }}
-          - **源码**: ${{ env.REPO_URL }}@${{ env.REPO_VERSION }}
+          - **编译时间**: ${{ env.FILE_DATE }}
+          - **登录地址**: ${{ env.IP_ADDR }}
         draft: false
         prerelease: false
