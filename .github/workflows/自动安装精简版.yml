@@ -253,10 +253,16 @@ jobs:
             mkdir -p files/etc/init.d files/etc/rc.d
             cp "$GITHUB_WORKSPACE/auto-setup-init.sh" files/etc/init.d/auto-setup
             sed -i "s|KMODS_URL_PLACEHOLDER|$KMODS_URL|g" files/etc/init.d/auto-setup
-            sed -i "s|PACKAGES_LIST_PLACEHOLDER|$PACKAGES_LIST|g" files/etc/init.d/auto-setup
+            sed -i "s|PACKAGES_TO_INSTALL=\"PACKAGES_LIST_PLACEHOLDER\"|PACKAGES_TO_INSTALL=\"$PACKAGES_LIST\"|g" files/etc/init.d/auto-setup
             chmod +x files/etc/init.d/auto-setup
             ln -sf ../init.d/auto-setup files/etc/rc.d/S99auto-setup
             echo "✅ 自动安装脚本配置完成"
+            echo "包列表: $PACKAGES_LIST"
+        
+            # 调试：检查替换结果
+            echo "=== 替换后的变量定义 ==="
+            grep "PACKAGES_TO_INSTALL=" files/etc/init.d/auto-setup
+            echo "=== 结束调试 ==="
         fi
 
     - name: 加载自定义配置和脚本
