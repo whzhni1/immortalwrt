@@ -97,6 +97,7 @@ check_network_with_retry() {
 
 # 安装软件包
 install_packages() {
+    log "需要安装的插件 ${PACKAGES_TO_INSTALL}"
     if [ -z "$PACKAGES_TO_INSTALL" ] || [ "$PACKAGES_TO_INSTALL" = " " ] || [ "$PACKAGES_TO_INSTALL" = "PACKAGES_LIST_PLACEHOLDER" ]; then
         log "没有需要安装的软件包，跳过"
         return 0
