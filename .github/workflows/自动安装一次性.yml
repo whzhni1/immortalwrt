@@ -508,9 +508,8 @@ jobs:
             echo ""
             echo "📦 执行流程："
             echo "  1. 添加 kmods 源到 distfeeds.conf 第3行"
-            echo "  2. 等待3分钟让系统稳定"
-            echo "  3. 检查网络（最多重试5次，每次间隔1分钟）"
-            echo "  4. 安装软件包："
+            echo "  2. 检查网络（最多重试5次，每次间隔1分钟）"
+            echo "  3. 安装软件包："
             if [ -n "$PACKAGES_LIST" ]; then
                 for pkg in $PACKAGES_LIST; do
                     echo "     - $pkg"
@@ -519,7 +518,7 @@ jobs:
             echo "  5. 自动安装 Lucky 最新正式版"
             echo ""
             echo "📝 日志位置: /tmp/auto-setup-[时间戳].log"
-            echo "✅ 成功日志: /root/auto-setup-success.log"
+            echo "✅ 成功日志: /tmp/auto-setup-success.log"
             echo "======================================"
         else
             echo "❌ 错误: auto-setup-init.sh 文件不存在"
