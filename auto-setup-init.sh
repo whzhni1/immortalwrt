@@ -17,10 +17,6 @@ PACKAGES_TO_INSTALL="PACKAGES_LIST_PLACEHOLDER"
 # 测试网络的 IP 列表
 TEST_IPS="223.5.5.5 114.114.114.114 8.8.8.8 1.1.1.1"
 
-# 软件包安装重试配置
-PKG_MAX_RETRIES=3    # 每个软件包安装最大重试次数
-PKG_RETRY_DELAY=30   # 安装重试间隔秒数
-
 # 日志函数
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -105,7 +101,7 @@ install_packages() {
     
     # 直接检查包列表是否有效
     if [ -z "$PACKAGES_TO_INSTALL" ] || [ "$PACKAGES_TO_INSTALL" = "PACKAGES_LIST_PLACEHOLDER" ]; then
-        log " 软件包列表为空或未正确配置"
+        log "软件包列表为空或未正确配置"
         return 1
     fi
     
@@ -114,10 +110,10 @@ install_packages() {
     # 更新软件源
     log "更新软件源..."
     if ! opkg update >> "$LOG_FILE" 2>&1; then
-        log " 软件源更新失败"
+        log "软件源更新失败"
         return 1
     fi
-    log " 软件源更新成功"
+    log "软件源更新成功"
     
     # 安装包
     local failed=0
@@ -131,38 +127,19 @@ install_packages() {
         
         # 检查是否已安装
         if opkg list-installed | grep -q "^$pkg "; then
-            log "  $pkg 已安装，跳过"
+            log "$pkg 已安装，跳过"
             skipped=$((skipped + 1))
             continue
         fi
         
-        # 尝试安装，最多重试3次
-        local retry_count=0
-        local installed=0
-        
-        while [ $retry_count -lt $PKG_MAX_RETRIES ] && [ $installed -eq 0 ]; do
-            retry_count=$((retry_count + 1))
-            
-            if [ $retry_count -eq 1 ]; then
-                log " 安装 $pkg..."
-            else
-                log " 第 $retry_count 次重试安装 $pkg..."
-            fi
-            
-            if opkg install "$pkg" >> "$LOG_FILE" 2>&1; then
-                log " $pkg 安装成功"
-                success=$((success + 1))
-                installed=1
-            else
-                if [ $retry_count -lt $PKG_MAX_RETRIES ]; then
-                    log " $pkg 安装失败，${PKG_RETRY_DELAY}秒后重试..."
-                    sleep $PKG_RETRY_DELAY
-                else
-                    log " $pkg 安装失败（已重试${PKG_MAX_RETRIES}次）"
-                    failed=$((failed + 1))
-                fi
-            fi
-        done
+        log "安装 $pkg..."
+        if opkg install "$pkg" >> "$LOG_FILE" 2>&1; then
+            log "$pkg 安装成功"
+            success=$((success + 1))
+        else
+            log "$pkg 安装失败"
+            failed=$((failed + 1))
+        fi
     done
     
     log "软件包安装完成: 成功 $success 个，跳过 $skipped 个，失败 $failed 个"
