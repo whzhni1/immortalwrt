@@ -277,6 +277,8 @@ jobs:
 
     - name: 配置和编译准备
       run: |
+        echo "📋 配置和编译准备"
+        
         # 复制设备配置
         cp ${{ env.CONFIG_FILE }} ImmortalWrt/.config
         
@@ -286,7 +288,8 @@ jobs:
           cd ImmortalWrt
           sed -i "s/192\.168\.[0-9]*\.[0-9]*/$SET_IP/g" package/base-files/files/bin/config_generate
           echo "IP_ADDR=$SET_IP" >> $GITHUB_ENV
-          echo "LAN IP 设置为: $SET_IP"
+          echo "✅ LAN IP 设置为: $SET_IP"
+          cd ..
         fi
         
         # 执行第二部分脚本
