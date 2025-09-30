@@ -291,6 +291,7 @@ jobs:
         
         # 执行第二部分脚本
         chmod +x $DIY_P2_SH
+        cd ImmortalWrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: 下载软件包并编译
