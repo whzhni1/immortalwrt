@@ -156,7 +156,8 @@ install_lucky() {
     log "======================================"
     
     download_base_url="http://release.66666.host"
-    luckydir="/usr/bin/lucky"  # 修改安装目录
+    luckydir="/etc/lucky"  # 配置文件目录
+    binary_path="/usr/bin/lucky"  # 可执行文件路径
     
     # URL 解码
     decode_url() {
@@ -227,9 +228,9 @@ install_lucky() {
     # 获取 wanji 子目录
     log "获取子目录..."
     if curl --version >/dev/null 2>&1; then
-        subdirs=$(curl -s "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^[0-9].*_' | sort -u | grep -v '^$')
+        subdirs=$(curl -s "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/■//g' | grep '^[0-9].*_' | sort -u | grep -v '^$')
     elif wget --version >/dev/null 2>&1; then
-        subdirs=$(wget -qO- "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^[0-9].*_' | sort -u | grep -v '^$')
+        subdirs=$(wget -qO- "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/■//g' | grep '^[0-9].*_' | sort -u | grep -v '^$')
     fi
     
     # 调试信息：显示获取到的所有子目录
@@ -311,30 +312,51 @@ install_lucky() {
     fi
     
     log "下载成功，开始解压..."
-    mkdir -p "$luckydir"
-    if ! tar -zxf '/tmp/lucky.tar.gz' -C "$luckydir/" >> "$LOG_FILE" 2>&1; then
+    # 创建临时目录解压
+    mkdir -p /tmp/lucky-extract
+    if ! tar -zxf '/tmp/lucky.tar.gz' -C "/tmp/lucky-extract/" >> "$LOG_FILE" 2>&1; then
         log " 解压失败"
         rm -f /tmp/lucky.tar.gz
+        rm -rf /tmp/lucky-extract
         return 1
     fi
     
-    log "设置权限..."
-    chmod +x "$luckydir/lucky"
-    chmod +x "$luckydir/scripts/"* 2>/dev/null
+    log "安装可执行文件到 /usr/bin..."
+    # 复制 lucky 可执行文件到 /usr/bin
+    if [ -f "/tmp/lucky-extract/lucky" ]; then
+        cp "/tmp/lucky-extract/lucky" "$binary_path"
+        chmod +x "$binary_path"
+        log "Lucky 可执行文件已安装到 $binary_path"
+    else
+        log "未找到 lucky 可执行文件"
+        rm -f /tmp/lucky.tar.gz
+        rm -rf /tmp/lucky-extract
+        return 1
+    fi
+    
+    log "安装配置文件和脚本..."
+    # 创建配置目录并复制其他文件
+    mkdir -p "$luckydir"
+    if [ -d "/tmp/lucky-extract/scripts" ]; then
+        cp -r "/tmp/lucky-extract/scripts" "$luckydir/"
+        chmod +x "$luckydir/scripts/"* 2>/dev/null
+    fi
+    if [ -d "/tmp/lucky-extract/config" ]; then
+        cp -r "/tmp/lucky-extract/config" "$luckydir/"
+    fi
+    
+    # 清理临时文件
     rm -f /tmp/lucky.tar.gz
+    rm -rf /tmp/lucky-extract
     
-    # 创建符号链接到 /usr/bin 让系统能直接识别 lucky 命令
-    log "创建符号链接..."
-    ln -sf "$luckydir/lucky" /usr/bin/lucky 2>/dev/null
-    
-    # 设置环境变量（简化，因为已经有符号链接了）
+    # 设置环境变量
     log "设置环境变量..."
     sed -i '/alias lucky=*/d' /etc/profile
     sed -i '/export luckydir=*/d' /etc/profile
-    echo "alias lucky=\"/usr/bin/lucky\"" >> /etc/profile
+    echo "alias lucky=\"$binary_path\"" >> /etc/profile
     echo "export luckydir=\"$luckydir\"" >> /etc/profile
     
-    # 设置服务 - 修改服务脚本路径
+    # 设置服务
     if [ -f "$luckydir/scripts/luckyservice" ]; then
         log "设置开机自启服务..."
         ln -sf "$luckydir/scripts/luckyservice" /etc/init.d/lucky
@@ -343,7 +365,7 @@ install_lucky() {
         /etc/init.d/lucky restart >> "$LOG_FILE" 2>&1
         log " Lucky 服务已启动"
     else
-        log " 未找到 luckyservice 脚本，请手动启动 Lucky"
+        log "未找到 luckyservice 脚本，请手动启动 Lucky"
     fi
     
     # 创建 LuCI 检测文件（可选）
@@ -362,12 +384,14 @@ install_lucky() {
 }
 EOF
     
-    log " Lucky 安装完成"
+    log "Lucky 安装完成"
     log "访问地址: http://你的路由器IP:16601"
-    log "Lucky 命令位置: /usr/bin/lucky"
+    log "Lucky 命令位置: $binary_path"
+    log "配置文件目录: $luckydir"
     
     return 0
 }
+
 
 # 主执行函数
 boot() {
