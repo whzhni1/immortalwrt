@@ -154,20 +154,23 @@ install_packages() {
 install_lucky() {
     log "步骤4: 安装 Lucky"
     log "======================================"
-    
+
     download_base_url="http://release.66666.host"
+    tmpdir="/tmp/lucky_tmp"
     luckydir="/etc/lucky.daji"
-    
+    config_file="/etc/config/lucky.daji"
+
     # URL 解码
     decode_url() {
         echo "$1" | sed 's/%/\\x/g' | while read -r line; do printf "%b\n" "$line"; done
     }
-    
+
     # 获取系统架构
     getcpucore() {
         cputype=$(uname -ms | tr ' ' '_' | tr '[A-Z]' '[a-z]')
         [ -n "$(echo $cputype | grep -E "linux.*armv.*")" ] && cpucore="armv5"
-        [ -n "$(echo $cputype | grep -E "linux.*armv7.*")" ] && [ -n "$(cat /proc/cpuinfo | grep vfp)" ] && [ ! -d /jffs/clash ] && cpucore="armv7"
+        [ -n "$(echo $cputype | grep -E "linux.*armv7.*")" ] && \
+            [ -n "$(cat /proc/cpuinfo | grep vfp)" ] && cpucore="armv7"
         [ -n "$(echo $cputype | grep -E "linux.*aarch64.*|linux.*armv8.*")" ] && cpucore="arm64"
         [ -n "$(echo $cputype | grep -E "linux.*86.*")" ] && cpucore="i386"
         [ -n "$(echo $cputype | grep -E "linux.*86_64.*")" ] && cpucore="x86_64"
@@ -176,8 +179,8 @@ install_lucky() {
             [ "$mipstype" = "0" ] && cpucore="mips_softfloat" || cpucore="mipsle_softfloat"
         fi
     }
-    
-    # 下载文件
+
+    # 下载文件函数
     webget() {
         if curl --version >/dev/null 2>&1; then
             result=$(curl -w %{http_code} --connect-timeout 5 -L -o $1 $2 2>> "$LOG_FILE")
@@ -189,166 +192,81 @@ install_lucky() {
             [ $? -eq 0 ] && result="200"
         fi
     }
-    
+
     # 获取CPU架构
     getcpucore
-    if [ -z "$cpucore" ]; then
-        log '错误: 未能识别系统架构'
-        return 1
-    fi
+    [ -z "$cpucore" ] && { log '错误: 未能识别系统架构'; return 1; }
     log "系统架构: $cpucore"
-    
-    # 获取最新正式版本
+
+    # 获取最新版本号
     log "获取最新正式版本..."
     if curl --version >/dev/null 2>&1; then
         versions=$(curl -s "$download_base_url/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^v' | sort -Vr)
-    elif wget --version >/dev/null 2>&1; then
-        versions=$(wget -qO- "$download_base_url/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^v' | sort -Vr)
     else
-        log "无法获取版本列表"
-        return 1
+        versions=$(wget -qO- "$download_base_url/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^v' | sort -Vr)
     fi
-    
-    # 调试信息：显示获取到的所有版本
-    log "获取到的所有版本:"
-    echo "$versions" | while read v; do log "  - $v"; done
-    
-    stable_versions=$(echo "$versions" | grep -v -i "beta")
-    
-    if [ -z "$stable_versions" ]; then
-        log "未找到正式版本，可用的版本:"
-        echo "$versions" | while read v; do log "  - $v"; done
-        return 1
-    fi
-    
-    version=$(echo "$stable_versions" | head -1)
+    version=$(echo "$versions" | grep -v -i "beta" | head -1)
+    [ -z "$version" ] && { log "未找到版本"; return 1; }
     log "选择的版本: $version"
-    
-    # 获取 wanji 子目录
-    log "获取子目录..."
+
+    # 获取子目录
     if curl --version >/dev/null 2>&1; then
-        subdirs=$(curl -s "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^[0-9].*_' | sort -u | grep -v '^$')
-    elif wget --version >/dev/null 2>&1; then
-        subdirs=$(wget -qO- "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^[0-9].*_' | sort -u | grep -v '^$')
+        subdirs=$(curl -s "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^[0-9].*_' | sort -u)
+    else
+        subdirs=$(wget -qO- "$download_base_url/$version/" | sed -n 's/.*href="\.\///p' | sed -E 's/\/.*//g' | grep '^[0-9].*_' | sort -u)
     fi
-    
-    # 调试信息：显示获取到的所有子目录
-    log "获取到的所有子目录:"
-    echo "$subdirs" | while read s; do log "  - $s"; done
-    
-    decoded_subdirs=$(decode_url "$subdirs")
-    subdir=$(echo "$decoded_subdirs" | grep "wanji" | head -1)
-    
-    if [ -z "$subdir" ]; then
-        log "未找到 wanji 子目录，可用的子目录:"
-        echo "$decoded_subdirs" | while read s; do log "  - $s"; done
-        return 1
-    fi
+    subdir=$(decode_url "$subdirs" | grep "wanji" | head -1)
+    [ -z "$subdir" ] && { log "未找到子目录"; return 1; }
     log "选择的子目录: $subdir"
-    
-    # 查找匹配的文件
-    log "查找安装包..."
+
+    # 查找安装包
     if curl --version >/dev/null 2>&1; then
-        file_list=$(curl -s "$download_base_url/$version/$subdir/" | sed -n 's/.*href="\([^"]*\)".*/\1/p' | grep -iE 'tar\.gz' | sort -u)
-    elif wget --version >/dev/null 2>&1; then
-        file_list=$(wget -qO- "$download_base_url/$version/$subdir/" | sed -n 's/.*href="\([^"]*\)".*/\1/p' | grep -iE 'tar\.gz' | sort -u)
+        file_list=$(curl -s "$download_base_url/$version/$subdir/" | sed -n 's/.*href="\([^"]*\)".*/\1/p' | grep -iE 'tar\.gz')
+    else
+        file_list=$(wget -qO- "$download_base_url/$version/$subdir/" | sed -n 's/.*href="\([^"]*\)".*/\1/p' | grep -iE 'tar\.gz')
     fi
-    
-    file_list=$(echo "$file_list" | grep -v '^$')
-    
-    if [ -z "$file_list" ]; then
-        log "未找到安装包文件"
-        return 1
-    fi
-    
-    log "可用的安装包:"
-    echo "$file_list" | while read file; do log "  - $file"; done
-    
-    # 根据架构选择文件
-    case "$cpucore" in
-        "x86_64")
-            selected_file=$(echo "$file_list" | grep -i "linux.*x86_64.*wanji" | head -1)
-            ;;
-        "arm64")
-            selected_file=$(echo "$file_list" | grep -i "linux.*arm64.*wanji" | head -1)
-            ;;
-        "armv7")
-            selected_file=$(echo "$file_list" | grep -i "linux.*arm.*wanji" | head -1)
-            ;;
-        "i386")
-            selected_file=$(echo "$file_list" | grep -i "linux.*386.*wanji" | head -1)
-            ;;
-        "mips_softfloat"|"mipsle_softfloat")
-            selected_file=$(echo "$file_list" | grep -i "linux.*mips.*wanji" | head -1)
-            ;;
-        *)
-            selected_file=""
-            ;;
-    esac
-    
-    if [ -z "$selected_file" ]; then
-        log "未找到匹配架构 ($cpucore) 的安装包"
-        log "尝试使用第一个可用文件..."
-        selected_file=$(echo "$file_list" | head -1)
-    fi
-    
-    if [ -z "$selected_file" ]; then
-        log " 没有可用的安装包"
-        return 1
-    fi
-    
+    selected_file=$(echo "$file_list" | grep -i "linux.*${cpucore}.*wanji" | head -1)
+    [ -z "$selected_file" ] && selected_file=$(echo "$file_list" | head -1)
+    [ -z "$selected_file" ] && { log "未找到安装包"; return 1; }
     log "选择的安装包: $selected_file"
-    
+
     download_url="$download_base_url/$version/$subdir/$selected_file"
     log "下载链接: $download_url"
-    
-    # 下载并安装
-    log "开始下载..."
+
+    # 下载并解压
+    rm -rf "$tmpdir"
+    mkdir -p "$tmpdir"
     webget /tmp/lucky.tar.gz "$download_url"
-    if [ "$result" != "200" ]; then
-        log " 下载失败 (HTTP: $result)"
-        return 1
-    fi
-    
-    log "下载成功，开始解压..."
-    mkdir -p "$luckydir"
-    if ! tar -zxf '/tmp/lucky.tar.gz' -C "$luckydir/" >> "$LOG_FILE" 2>&1; then
-        log " 解压失败"
-        rm -f /tmp/lucky.tar.gz
-        return 1
-    fi
-    
-    log "设置权限..."
-    chmod +x "$luckydir/lucky"
-    chmod +x "$luckydir/scripts/"* 2>/dev/null
+    [ "$result" != "200" ] && { log "下载失败"; return 1; }
+    tar -zxf /tmp/lucky.tar.gz -C "$tmpdir" || { log "解压失败"; return 1; }
     rm -f /tmp/lucky.tar.gz
-    
-    # 确保 LuCI 能检测到 lucky
-    ln -sf "$luckydir/lucky" /usr/bin/lucky
+
+    # 安装二进制
+    mv -f "$tmpdir/lucky" /usr/bin/lucky
     chmod +x /usr/bin/lucky
-    
-    # 设置环境变量
-    log "设置环境变量..."
-    sed -i '/alias lucky=*/d' /etc/profile
-    sed -i '/export luckydir=*/d' /etc/profile
-    echo "alias lucky=\"$luckydir/lucky\"" >> /etc/profile
-    echo "export luckydir=\"$luckydir\"" >> /etc/profile
-    
-    # 设置服务
+
+    # 安装脚本
+    mkdir -p "$luckydir"
+    [ -d "$tmpdir/scripts" ] && cp -r "$tmpdir/scripts" "$luckydir/"
+    chmod +x "$luckydir/scripts/"* 2>/dev/null
+
+    # 确保配置文件存在
+    [ -f "$config_file" ] || touch "$config_file"
+
+    # 修正 luckyservice 脚本里的 CONF 路径
     if [ -f "$luckydir/scripts/luckyservice" ]; then
-        log "设置开机自启服务..."
-        ln -sf "$luckydir/scripts/luckyservice" /etc/init.d/lucky.daji
-        chmod 755 /etc/init.d/lucky.daji
-        /etc/init.d/lucky.daji enable
-        /etc/init.d/lucky.daji restart >> "$LOG_FILE" 2>&1
+        sed -i "s|^CONF=.*|CONF=$config_file|" "$luckydir/scripts/luckyservice"
+        ln -sf "$luckydir/scripts/luckyservice" /etc/init.d/lucky
+        chmod 755 /etc/init.d/lucky
+        /etc/init.d/lucky enable
+        /etc/init.d/lucky restart >> "$LOG_FILE" 2>&1
         log " Lucky 服务已启动"
     else
         log " 未找到 luckyservice 脚本，请手动启动 Lucky"
     fi
-    
+
     log " Lucky 安装完成"
     log "访问地址: http://你的路由器IP:16601"
-    
     return 0
 }
 
