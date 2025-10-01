@@ -156,7 +156,7 @@ install_lucky() {
     log "======================================"
     
     download_base_url="http://release.66666.host"
-    luckydir="/etc/lucky.daji"
+    luckydir="/usr/bin/lucky"  # 修改安装目录
     
     # URL 解码
     decode_url() {
@@ -323,27 +323,48 @@ install_lucky() {
     chmod +x "$luckydir/scripts/"* 2>/dev/null
     rm -f /tmp/lucky.tar.gz
     
-    # 设置环境变量
+    # 创建符号链接到 /usr/bin 让系统能直接识别 lucky 命令
+    log "创建符号链接..."
+    ln -sf "$luckydir/lucky" /usr/bin/lucky 2>/dev/null
+    
+    # 设置环境变量（简化，因为已经有符号链接了）
     log "设置环境变量..."
     sed -i '/alias lucky=*/d' /etc/profile
     sed -i '/export luckydir=*/d' /etc/profile
-    echo "alias lucky=\"$luckydir/lucky\"" >> /etc/profile
+    echo "alias lucky=\"/usr/bin/lucky\"" >> /etc/profile
     echo "export luckydir=\"$luckydir\"" >> /etc/profile
     
-    # 设置服务
+    # 设置服务 - 修改服务脚本路径
     if [ -f "$luckydir/scripts/luckyservice" ]; then
         log "设置开机自启服务..."
-        ln -sf "$luckydir/scripts/luckyservice" /etc/init.d/lucky.daji
-        chmod 755 /etc/init.d/lucky.daji
-        /etc/init.d/lucky.daji enable
-        /etc/init.d/lucky.daji restart >> "$LOG_FILE" 2>&1
+        ln -sf "$luckydir/scripts/luckyservice" /etc/init.d/lucky
+        chmod 755 /etc/init.d/lucky
+        /etc/init.d/lucky enable
+        /etc/init.d/lucky restart >> "$LOG_FILE" 2>&1
         log " Lucky 服务已启动"
     else
         log " 未找到 luckyservice 脚本，请手动启动 Lucky"
     fi
     
+    # 创建 LuCI 检测文件（可选）
+    log "创建 LuCI 检测文件..."
+    mkdir -p /usr/share/luci/menu.d
+    cat > /usr/share/luci/menu.d/luci-lucky.json << EOF
+{
+    "admin/services/lucky": {
+        "title": "Lucky",
+        "order": 70,
+        "action": {
+            "type": "firstchild",
+            "recurse": true
+        }
+    }
+}
+EOF
+    
     log " Lucky 安装完成"
     log "访问地址: http://你的路由器IP:16601"
+    log "Lucky 命令位置: /usr/bin/lucky"
     
     return 0
 }
@@ -386,10 +407,6 @@ boot() {
         log "======================================"
         log " 所有配置成功完成"
         log "======================================"
-        
-        # 保存日志
-        cp "$LOG_FILE" "/tmp/auto-setup-success.log" 2>/dev/null
-        log "日志已保存到: /tmp/auto-setup-success.log"
         
         # 删除自己
         remove_self
