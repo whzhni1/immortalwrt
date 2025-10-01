@@ -1,4 +1,4 @@
-name: 自动安装一次性
+name: 编译immortalwrt官方固件含插件脚本_详细带调试日志
 on:
   repository_dispatch:
   workflow_dispatch:
