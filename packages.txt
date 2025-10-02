@@ -2,6 +2,10 @@
 # 每行一个包名，以 # 开头的行为注释
 
 openssh-sftp-server
+luci-app-ttyd
+luci-i18n-ttyd-zh-cn
+luci-app-filemanager
+luci-i18n-filemanager-zh-cn
 luci-app-wechatpush
 luci-i18n-wechatpush-zh-cn
 luci-app-passwall
