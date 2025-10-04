@@ -1,4 +1,4 @@
-name: 自动安装精简版（带缓存优化）
+name: 自动安装精简版带缓存
 on:
   repository_dispatch:
   workflow_dispatch:
@@ -41,7 +41,7 @@ on:
         default: true
         type: boolean
       CLEAR_CACHE:
-        description: '清除缓存重新编译'
+        description: '清除所有缓存重新编译'
         required: false
         default: false
         type: boolean
@@ -91,6 +91,9 @@ jobs:
             ;;
         esac
 
+        # 生成配置文件哈希（用于缓存键）
+        CONFIG_HASH=$(md5sum "${DEVICE_MODEL}.config" 2>/dev/null | cut -d' ' -f1 || echo "default")
+
         # 设置环境变量
         cat >> $GITHUB_ENV << EOF
         REPO_VERSION=$REPO_VERSION
@@ -98,15 +101,16 @@ jobs:
         DEVICE_NAME=$DEVICE_NAME
         DEVICE_FULL_NAME=$DEVICE_FULL_NAME
         CONFIG_FILE=${DEVICE_MODEL}.config
+        CONFIG_HASH=$CONFIG_HASH
         FILE_DATE=$(date +"%Y.%m.%d-%H%M")
-        CLEAR_CACHE=${{ github.event.inputs.CLEAR_CACHE }}
+        CACHE_DATE=$(date +"%Y%m%d")
         EOF
 
         echo "======================================"
         echo "版本: $REPO_VERSION"
         echo "设备: $DEVICE_FULL_NAME"
         echo "配置文件: ${DEVICE_MODEL}.config"
-        echo "清除缓存: ${{ github.event.inputs.CLEAR_CACHE }}"
+        echo "配置哈希: $CONFIG_HASH"
         echo "======================================"
 
     - name: 初始化编译环境
@@ -132,7 +136,7 @@ jobs:
     - name: 清理磁盘空间
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: true
+        tool-cache: false
         android: true
         dotnet: true
         haskell: true
@@ -140,72 +144,22 @@ jobs:
         docker-images: true
         swap-storage: true
 
-    - name: 缓存工具链和下载文件
-      id: cache-dl
-      uses: actions/cache@v3
-      with:
-        path: |
-          /workdir/ImmortalWrt/dl
-          /workdir/ImmortalWrt/build_dir
-          /workdir/ImmortalWrt/staging_dir
-        key: ${{ runner.os }}-immortalwrt-${{ env.DEVICE_NAME }}-${{ hashFiles('**/feeds.conf.default', env.CONFIG_FILE) }}-v3
-        restore-keys: |
-          ${{ runner.os }}-immortalwrt-${{ env.DEVICE_NAME }}-
-          ${{ runner.os }}-immortalwrt-
-      if: env.CLEAR_CACHE == 'false'
-
-    - name: 缓存 ccache 编译缓存
-      id: cache-ccache
-      uses: actions/cache@v3
-      with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ env.DEVICE_NAME }}-${{ hashFiles('**/feeds.conf.default', env.CONFIG_FILE) }}-v2
-        restore-keys: |
-          ${{ runner.os }}-ccache-${{ env.DEVICE_NAME }}-
-          ${{ runner.os }}-ccache-
-      if: env.CLEAR_CACHE == 'false'
-
-    - name: 设置 ccache
-      run: |
-        sudo apt-get install -y ccache
-        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        echo "/usr/lib/ccache" >> $GITHUB_PATH
-        ccache -M 5G
-        ccache -s
-
     - name: 下载源码
       working-directory: /workdir
       run: |
         df -hT $PWD
         echo "正在克隆 ImmortalWrt 源码..."
         
-        # 如果缓存存在且不需要清除，检查是否已有源码
-        if [ "${{ env.CLEAR_CACHE }}" = "false" ] && [ -d "ImmortalWrt" ]; then
-          echo "✅ 使用现有的源码目录"
-          cd ImmortalWrt
-          git fetch --depth 1
-          git reset --hard origin/HEAD
-        else
-          echo "🔄 重新克隆源码..."
-          rm -rf ImmortalWrt
-          
-          # 检测版本类型并克隆
-          if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$REPO_VERSION$"; then
-            echo "✅ 检测到 Tag: $REPO_VERSION"
-            git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt
-          elif [[ "$REPO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-            VERSION_WITH_V="v$REPO_VERSION"
-            if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$VERSION_WITH_V$"; then
-              echo "✅ 检测到 Tag: $VERSION_WITH_V"
-              git clone --depth 1 "$REPO_URL" -b "$VERSION_WITH_V" ImmortalWrt
-              echo "REPO_VERSION=$VERSION_WITH_V" >> $GITHUB_ENV
-            elif git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
-              echo "✅ 检测到 Branch: $REPO_VERSION"
-              git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt
-            else
-              echo "❌ 错误：版本 '$REPO_VERSION' 不存在"
-              exit 1
-            fi
+        # 检测版本类型并克隆
+        if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$REPO_VERSION$"; then
+          echo "✅ 检测到 Tag: $REPO_VERSION"
+          git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt
+        elif [[ "$REPO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+          VERSION_WITH_V="v$REPO_VERSION"
+          if git ls-remote --tags "$REPO_URL" | grep -q "refs/tags/$VERSION_WITH_V$"; then
+            echo "✅ 检测到 Tag: $VERSION_WITH_V"
+            git clone --depth 1 "$REPO_URL" -b "$VERSION_WITH_V" ImmortalWrt
+            echo "REPO_VERSION=$VERSION_WITH_V" >> $GITHUB_ENV
           elif git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
             echo "✅ 检测到 Branch: $REPO_VERSION"
             git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt
@@ -213,6 +167,12 @@ jobs:
             echo "❌ 错误：版本 '$REPO_VERSION' 不存在"
             exit 1
           fi
+        elif git ls-remote --heads "$REPO_URL" | grep -q "refs/heads/$REPO_VERSION$"; then
+          echo "✅ 检测到 Branch: $REPO_VERSION"
+          git clone --depth 1 "$REPO_URL" -b "$REPO_VERSION" ImmortalWrt
+        else
+          echo "❌ 错误：版本 '$REPO_VERSION' 不存在"
+          exit 1
         fi
         
         ln -sf /workdir/ImmortalWrt $GITHUB_WORKSPACE/ImmortalWrt
@@ -241,6 +201,66 @@ jobs:
           echo "TARGET_NAME=mediatek_filogic" >> $GITHUB_ENV
           echo "TARGET_PATH=mediatek/filogic" >> $GITHUB_ENV
         fi
+
+    # ============ 缓存策略开始 ============
+
+    - name: 清除旧缓存
+      if: github.event.inputs.CLEAR_CACHE == 'true'
+      run: |
+        echo "🗑️ 已请求清除缓存，跳过缓存恢复"
+
+    - name: 恢复下载文件缓存 (dl)
+      if: github.event.inputs.CLEAR_CACHE != 'true'
+      uses: actions/cache@v4
+      with:
+        path: ImmortalWrt/dl
+        key: dl-${{ env.REPO_VERSION }}-${{ env.CACHE_DATE }}
+        restore-keys: |
+          dl-${{ env.REPO_VERSION }}-
+          dl-
+
+    - name: 恢复 Feeds 缓存
+      if: github.event.inputs.CLEAR_CACHE != 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ImmortalWrt/feeds
+        key: feeds-${{ env.REPO_VERSION }}-${{ hashFiles('feeds.conf.default') }}
+        restore-keys: |
+          feeds-${{ env.REPO_VERSION }}-
+
+    - name: 恢复工具链缓存
+      if: github.event.inputs.CLEAR_CACHE != 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ImmortalWrt/staging_dir/toolchain-*
+          ImmortalWrt/staging_dir/host
+          ImmortalWrt/build_dir/host
+        key: toolchain-${{ env.REPO_VERSION }}-${{ env.TARGET_NAME }}-${{ env.CONFIG_HASH }}-${{ env.CACHE_DATE }}
+        restore-keys: |
+          toolchain-${{ env.REPO_VERSION }}-${{ env.TARGET_NAME }}-${{ env.CONFIG_HASH }}-
+          toolchain-${{ env.REPO_VERSION }}-${{ env.TARGET_NAME }}-
+
+    - name: 启用 ccache 编译缓存
+      if: github.event.inputs.CLEAR_CACHE != 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ccache-${{ env.REPO_VERSION }}-${{ env.DEVICE_MODEL }}-${{ env.CONFIG_HASH }}-${{ env.CACHE_DATE }}
+        restore-keys: |
+          ccache-${{ env.REPO_VERSION }}-${{ env.DEVICE_MODEL }}-${{ env.CONFIG_HASH }}-
+          ccache-${{ env.REPO_VERSION }}-${{ env.DEVICE_MODEL }}-
+
+    - name: 配置 ccache
+      run: |
+        cd ImmortalWrt
+        echo "CONFIG_CCACHE=y" >> .config
+        export CCACHE_DIR=~/.ccache
+        ccache -M 2G
+        ccache -s
+
+    # ============ 缓存策略结束 ============
 
     - name: 获取官方 vermagic
       if: ${{ github.event.inputs.FIX_VERMAGIC == 'true' }}
@@ -394,7 +414,6 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: 更新并安装feeds
-      if: steps.cache-dl.outputs.cache-hit != 'true'
       run: |
         cd ImmortalWrt
         ./scripts/feeds update -a
@@ -422,27 +441,33 @@ jobs:
         cd ImmortalWrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: 下载软件包
-      if: steps.cache-dl.outputs.cache-hit != 'true'
-      run: |
-        cd ImmortalWrt
-        make defconfig
-        make download -j8
-        find dl -size -1024c -delete
-
-    - name: 编译固件
+    - name: 下载软件包并编译
       id: compile
       run: |
         cd ImmortalWrt
-        echo "开始编译..."
-        export PATH="/usr/lib/ccache:$PATH"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: 显示缓存统计
-      run: |
+        make defconfig
+        
+        echo "======================================"
+        echo "📦 开始下载编译依赖..."
+        echo "======================================"
+        make download -j16
+        find dl -size -1024c -delete
+        
+        echo "======================================"
+        echo "🔨 开始编译固件 (启用ccache加速)..."
+        echo "======================================"
+        
+        export CCACHE_DIR=~/.ccache
         ccache -s
-        echo "缓存命中率统计:"
+        
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        
+        echo "======================================"
+        echo "📊 ccache 统计信息:"
+        ccache -s
+        echo "======================================"
+        
+        echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 整理和验证固件
       id: organize
@@ -491,8 +516,6 @@ jobs:
           - **设备**: ${{ env.DEVICE_FULL_NAME }}
           - **编译时间**: ${{ env.FILE_DATE }}
           - **登录地址**: ${{ env.IP_ADDR }}
-          - **缓存状态**: 
-            - 工具链缓存: ${{ steps.cache-dl.outputs.cache-hit || '未命中' }}
-            - 编译缓存: ${{ steps.cache-ccache.outputs.cache-hit || '未命中' }}
+          - **缓存状态**: ${{ github.event.inputs.CLEAR_CACHE == 'true' && '🔄 全新编译' || '⚡ 使用缓存加速' }}
         draft: false
         prerelease: false
