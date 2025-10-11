@@ -14,3 +14,4 @@ luci-app-openlist
 luci-i18n-openlist-zh-cn
 luci-app-filemanager
 luci-i18n-filemanager-zh-cn
+tailscale
